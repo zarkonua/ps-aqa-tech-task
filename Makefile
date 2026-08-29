@@ -7,7 +7,8 @@ COMPOSER_VER := 2.9.3
 # just a shortcut for long docker command string
 DOCKER := docker run --rm -it -v $(shell pwd):/app -w /app
 
-LOCAL_IP := $$(ipconfig getifaddr en0)
+LOCAL_IP := $(shell hostname -I 2>/dev/null | awk '{print $$1}') # Ubuntu
+# LOCAL_IP := $$(ipconfig getifaddr en0)   - MacOs
 
 clean:
 	rm -rf vendor
