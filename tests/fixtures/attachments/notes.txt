@@ -1,0 +1,2 @@
+Plain text fixture.
+Second line with unicode: Привіт, 日本語, café.

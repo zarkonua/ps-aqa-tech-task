@@ -33,6 +33,7 @@ Key features:
 - Advanced search: combined filters, date range, stable sorting and totals for the notes list. See [Advanced Search and Sorting](docs/advanced-search-sorting.md).
 - Password reset and account settings: reset by emailed link, change password, change email with confirmation, time zone. See [Password Reset and Account Settings](docs/password-reset-account-settings.md).
 - Bulk operations: set category, add or remove tags, or delete up to 100 notes at once, with per-note results. See [Bulk Operations](docs/bulk-operations.md).
+- File attachments: up to five PNG, JPG, PDF, TXT or CSV files per note. See [File Attachments](docs/file-attachments.md).
 
 ## Tech Stack
 

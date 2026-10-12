@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Tests\Application\Command;
 
 use App\Entity\Note;
+use App\Entity\NoteAttachment;
 use App\Entity\NoteShare;
 use App\Entity\Tag;
 use App\Entity\User;
+use App\Service\AttachmentStorage;
 use App\Service\SharingFixtures;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
@@ -48,7 +50,9 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame([], $first['notes']['private_1']['shares']);
         self::assertSame(['viewer' => 'viewer', 'editor' => 'editor'], array_map(static fn (array $share): string => $share['role'], $first['notes']['shared_1']['shares']));
         self::assertSame('owner.'.self::RUN_A.'@qa-fixtures.test', $first['users']['owner']['email']);
-        self::assertSame(5, $first['version']);
+        self::assertSame(6, $first['version']);
+        self::assertSame(['pdf', 'png', 'txt'], array_keys($first['notes']['shared_1']['attachments']));
+        self::assertSame([], $first['notes']['private_1']['attachments']);
         self::assertCount(105, $first['bulk_notes']);
         self::assertCount(60, $first['search_notes']);
         self::assertSame($first['search_notes']['search_01']['updated_at'], $first['search_notes']['search_06']['updated_at']);
@@ -80,6 +84,12 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame($first['search_notes']['search_07']['title'], $searchNote->getTitle());
         self::assertSame('Personal', $em->find(Note::class, $first['notes']['shared_1']['id'])->getCategory()->getName());
 
+        // Both runs have their three files; reseeding did not leave the old ones behind.
+        $storage = self::getContainer()->get(AttachmentStorage::class);
+        $pdf = $em->find(NoteAttachment::class, $first['notes']['shared_1']['attachments']['pdf']['id']);
+        self::assertSame($first['notes']['shared_1']['attachments']['pdf']['sha256'], hash_file('sha256', $storage->path($pdf->getStorageKey())));
+        self::assertCount(6, $storage->keys());
+
         $tester = new CommandTester($this->application->find('app:fixtures:sharing:purge'));
         self::assertSame(Command::SUCCESS, $tester->execute(['run-id' => self::RUN_A]));
         self::assertStringContainsString('Removed 5 persona(s)', $tester->getDisplay());
@@ -89,6 +99,7 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertNull($em->find(Note::class, $first['notes']['shared_1']['id']));
         self::assertNull($em->find(Tag::class, $first['tags']['owner']['work']['id']));
         self::assertNotNull($em->find(Note::class, $other['notes']['shared_1']['id']), 'another run must not be affected');
+        self::assertCount(3, $storage->keys());
     }
 
     public function testInvalidRunIdIsRejected(): void

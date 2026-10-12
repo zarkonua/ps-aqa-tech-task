@@ -13,7 +13,8 @@ use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
 /**
- * Deleting a note removes its shares (FK cascade); the deletion and each removed share are audited first.
+ * Deleting a note removes its shares and attachments (FK cascade); the deletion and each removed share
+ * are audited first, and the attachment files are removed afterwards.
  */
 final class NoteRemoveProcessor implements ProcessorInterface
 {
@@ -27,11 +28,18 @@ final class NoteRemoveProcessor implements ProcessorInterface
 
     public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): mixed
     {
-        if ($data instanceof Note) {
-            $actor = $this->security->getUser();
-            $this->mutator->auditDeletion($data, $actor instanceof User ? $actor : null);
+        if (!$data instanceof Note) {
+            return $this->removeProcessor->process($data, $operation, $uriVariables, $context);
         }
 
-        return $this->removeProcessor->process($data, $operation, $uriVariables, $context);
+        $actor = $this->security->getUser();
+        $files = $this->mutator->attachmentKeys($data);
+        $this->mutator->auditDeletion($data, $actor instanceof User ? $actor : null);
+
+        $result = $this->removeProcessor->process($data, $operation, $uriVariables, $context);
+        // Only once the note is really gone.
+        $this->mutator->removeFiles($files);
+
+        return $result;
     }
 }

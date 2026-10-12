@@ -992,6 +992,7 @@ function renderNotes() {
             <div class="note-actions">
                 ${canEdit ? `<button data-action="edit">Update</button>` : ""}
                 ${canEdit ? `<button class="secondary" data-action="tags">Tags</button>` : ""}
+                <button class="secondary" data-action="files">Files</button>
                 ${role === "owner" ? `<button class="secondary" data-action="share">Share</button>` : ""}
                 ${role === "owner" ? `<button class="danger" data-action="delete">Delete</button>` : ""}
             </div>
@@ -1037,6 +1038,13 @@ function renderNotes() {
             } else if (result?.saved) {
                 setStatus("Tags and category updated.");
                 await refreshNotes().catch((error) => setStatus(error.message, true));
+            }
+        });
+
+        wrapper.querySelector('[data-action="files"]').addEventListener("click", async () => {
+            const result = await openAttachmentsDialog(note, canEdit);
+            if (result?.error) {
+                await handleNoteError(result.error);
             }
         });
 
@@ -1668,6 +1676,309 @@ function openNoteTaxonomyDialog(note) {
         deactivate = activateDialog(backdrop, () => close(null));
         renderChips();
         categorySelect.focus();
+        load();
+    });
+}
+
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const ATTACHMENT_EXTENSIONS = ["png", "jpg", "jpeg", "pdf", "txt", "csv"];
+
+function formatBytes(bytes) {
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
+    return bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// fetch() cannot report upload progress, so uploads go through XMLHttpRequest.
+function uploadAttachment(noteId, file, onProgress) {
+    return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        const form = new FormData();
+        form.append("file", file);
+
+        request.open("POST", `/api/notes/${noteId}/attachments`);
+        request.setRequestHeader("Accept", "application/json");
+        request.setRequestHeader("Authorization", `Bearer ${getToken() || ""}`);
+        request.upload.addEventListener("progress", (event) => {
+            if (event.lengthComputable) {
+                onProgress(Math.round((event.loaded / event.total) * 100));
+            }
+        });
+        request.addEventListener("load", () => {
+            let payload = {};
+            try {
+                payload = JSON.parse(request.responseText);
+            } catch {
+                payload = {};
+            }
+            if (request.status >= 200 && request.status < 300) {
+                resolve(payload);
+                return;
+            }
+            if (request.status === 401) {
+                signOutLocally("Your session has ended. Sign in again.", true);
+            }
+            reject(apiError(
+                extractValidationMessage(payload) || payload.error || payload.message || `Upload failed: ${request.status}`,
+                request.status,
+            ));
+        });
+        request.addEventListener("error", () => reject(apiError("The upload was interrupted. Check your connection and try again.", 0)));
+        request.addEventListener("abort", () => reject(apiError("Upload cancelled.", 0)));
+        request.send(form);
+    });
+}
+
+async function downloadAttachment(attachment) {
+    const response = await fetch(attachment.download_url, {headers: {Authorization: `Bearer ${getToken() || ""}`}});
+    if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw apiError(payload.error || payload.message || `Download failed: ${response.status}`, response.status);
+    }
+
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = attachment.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Files of one note: everyone who sees the note can download; owner and editors can add and delete.
+function openAttachmentsDialog(note, canEdit) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Files");
+        const inputId = `attachment-input-${modalCounter}`;
+
+        const body = document.createElement("div");
+        body.className = "modal-form";
+        body.innerHTML = `
+            <p class="modal-message share-note-title"></p>
+            ${canEdit ? `
+                <div class="drop-zone" data-role="drop-zone">
+                    <label for="${inputId}">Drop files here or choose them</label>
+                    <input type="file" id="${inputId}" multiple accept=".png,.jpg,.jpeg,.pdf,.txt,.csv" aria-describedby="${inputId}-hint">
+                    <small id="${inputId}-hint">PNG, JPG, PDF, TXT or CSV, up to 10 MB each, at most 5 per note.</small>
+                </div>
+                <div class="upload-progress hidden" data-role="progress">
+                    <span data-role="progress-label"></span>
+                    <progress max="100" value="0" aria-label="Upload progress"></progress>
+                </div>
+            ` : ""}
+            <p class="share-feedback" role="alert"></p>
+            <h4 class="share-heading">Attached files</h4>
+            <div class="share-list" data-role="list" aria-live="polite"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="close">Close</button>
+            </div>
+        `;
+        body.querySelector(".share-note-title").textContent = note.title || "";
+
+        const listEl = body.querySelector('[data-role="list"]');
+        const feedbackEl = body.querySelector(".share-feedback");
+        const dropZone = body.querySelector('[data-role="drop-zone"]');
+        const fileInput = body.querySelector('input[type="file"]');
+        const progressEl = body.querySelector('[data-role="progress"]');
+
+        let closed = false;
+        let uploading = false;
+        let attachmentCount = 0;
+        let maxAttachments = 5;
+        let deactivate = () => {};
+        const close = (result) => {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+
+        // The note is gone or no longer shared with us.
+        const closeIfAccessLost = (error) => {
+            if (error?.status === 404 && error.message === "Note not found.") {
+                close({error});
+                return true;
+            }
+            return false;
+        };
+
+        const render = (items) => {
+            listEl.innerHTML = "";
+            if (items.length === 0) {
+                listEl.innerHTML = `<p class="share-empty">No files attached.</p>`;
+                return;
+            }
+
+            for (const attachment of items) {
+                const row = document.createElement("div");
+                row.className = "share-row attachment-row";
+                row.innerHTML = `
+                    <span class="share-email"></span>
+                    <button type="button" class="secondary" data-action="download">Download</button>
+                    ${canEdit ? `<button type="button" class="danger" data-action="delete">Delete</button>` : ""}
+                `;
+                row.querySelector(".share-email").textContent = `${attachment.filename} (${formatBytes(attachment.size)})`;
+                const downloadButton = row.querySelector('[data-action="download"]');
+                downloadButton.setAttribute("aria-label", `Download ${attachment.filename}`);
+                downloadButton.addEventListener("click", async () => {
+                    downloadButton.disabled = true;
+                    try {
+                        await downloadAttachment(attachment);
+                        setFeedback(feedbackEl, "");
+                    } catch (error) {
+                        setFeedback(feedbackEl, error.status === 404 ? "This file is no longer available." : error.message, true);
+                        await load();
+                    } finally {
+                        downloadButton.disabled = false;
+                    }
+                });
+
+                const deleteButton = row.querySelector('[data-action="delete"]');
+                deleteButton?.setAttribute("aria-label", `Delete ${attachment.filename}`);
+                deleteButton?.addEventListener("click", async () => {
+                    const confirmed = await openConfirmModal({
+                        title: "Delete file",
+                        message: `Delete "${attachment.filename}"? This cannot be undone.`,
+                        confirmLabel: "Delete",
+                    });
+                    if (!confirmed || closed) {
+                        return;
+                    }
+                    try {
+                        await api(`/api/attachments/${attachment.id}`, {method: "DELETE"});
+                        setFeedback(feedbackEl, `Deleted "${attachment.filename}".`);
+                    } catch (error) {
+                        setFeedback(feedbackEl, error.status === 404 ? "This file was already deleted." : error.message, true);
+                    }
+                    await load();
+                });
+
+                listEl.appendChild(row);
+            }
+        };
+
+        async function load() {
+            if (closed) {
+                return;
+            }
+            if (listEl.childElementCount === 0) {
+                listEl.innerHTML = `<p class="share-empty">Loading…</p>`;
+            }
+            listEl.setAttribute("aria-busy", "true");
+            try {
+                const payload = await api(`/api/notes/${note.id}/attachments`);
+                const items = Array.isArray(payload?.items) ? payload.items : [];
+                attachmentCount = items.length;
+                maxAttachments = Number.isFinite(payload?.max) ? payload.max : 5;
+                if (!closed) {
+                    render(items);
+                }
+            } catch (error) {
+                if (closed || closeIfAccessLost(error)) {
+                    return;
+                }
+                listEl.innerHTML = `
+                    <p class="share-empty share-feedback--error">Could not load the files.</p>
+                    <button type="button" class="secondary" data-action="retry">Retry</button>
+                `;
+                listEl.querySelector('[data-action="retry"]').addEventListener("click", load);
+            } finally {
+                listEl.setAttribute("aria-busy", "false");
+            }
+        }
+
+        // Checked here for a quick answer; the server checks the real content again.
+        const problemWith = (file) => {
+            const extension = (file.name.split(".").pop() || "").toLowerCase();
+            if (!file.name.includes(".") || !ATTACHMENT_EXTENSIONS.includes(extension)) {
+                return "only PNG, JPG, PDF, TXT and CSV files are allowed";
+            }
+            if (file.size > ATTACHMENT_MAX_BYTES) {
+                return "larger than 10 MB";
+            }
+            return file.size === 0 ? "the file is empty" : "";
+        };
+
+        async function uploadFiles(files) {
+            if (uploading || files.length === 0) {
+                return;
+            }
+            uploading = true;
+            fileInput.disabled = true;
+            const problems = [];
+            let uploaded = 0;
+
+            for (const [index, file] of files.entries()) {
+                const problem = attachmentCount >= maxAttachments ? `a note can have at most ${maxAttachments} files` : problemWith(file);
+                if (problem) {
+                    problems.push(`${file.name}: ${problem}`);
+                    continue;
+                }
+
+                progressEl.classList.remove("hidden");
+                progressEl.querySelector('[data-role="progress-label"]').textContent = `Uploading ${file.name} (${index + 1} of ${files.length})`;
+                const bar = progressEl.querySelector("progress");
+                bar.value = 0;
+                try {
+                    await uploadAttachment(note.id, file, (percent) => {
+                        bar.value = percent;
+                    });
+                    uploaded += 1;
+                    attachmentCount += 1;
+                } catch (error) {
+                    if (closeIfAccessLost(error) || error.status === 401) {
+                        close(error.status === 401 ? null : {error});
+                        return;
+                    }
+                    problems.push(`${file.name}: ${retryHint(error).replace(/^file: /, "").replace(/\.$/, "")}`);
+                }
+            }
+
+            uploading = false;
+            fileInput.disabled = false;
+            fileInput.value = "";
+            progressEl.classList.add("hidden");
+            if (problems.length > 0) {
+                setFeedback(feedbackEl, `${uploaded > 0 ? `${uploaded} uploaded. ` : ""}Not uploaded — ${problems.join("; ")}.`, true);
+            } else {
+                setFeedback(feedbackEl, `${uploaded} file${uploaded === 1 ? "" : "s"} uploaded.`);
+            }
+            await load();
+        }
+
+        if (canEdit) {
+            fileInput.addEventListener("change", () => uploadFiles(Array.from(fileInput.files || [])));
+            for (const eventName of ["dragenter", "dragover"]) {
+                dropZone.addEventListener(eventName, (event) => {
+                    event.preventDefault();
+                    dropZone.classList.add("drop-zone--active");
+                });
+            }
+            for (const eventName of ["dragleave", "drop"]) {
+                dropZone.addEventListener(eventName, (event) => {
+                    event.preventDefault();
+                    dropZone.classList.remove("drop-zone--active");
+                });
+            }
+            dropZone.addEventListener("drop", (event) => uploadFiles(Array.from(event.dataTransfer?.files || [])));
+        }
+
+        body.querySelector('[data-action="close"]').addEventListener("click", () => close(null));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(null);
+            }
+        });
+
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, () => close(null));
+        (fileInput || body.querySelector('[data-action="close"]')).focus();
         load();
     });
 }

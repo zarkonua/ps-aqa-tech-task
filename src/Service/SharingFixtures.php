@@ -8,10 +8,12 @@ use App\Entity\AccountToken;
 use App\Entity\AuditEvent;
 use App\Entity\Category;
 use App\Entity\Note;
+use App\Entity\NoteAttachment;
 use App\Entity\NoteShare;
 use App\Entity\Tag;
 use App\Entity\User;
 use App\Enum\ShareRole;
+use App\Repository\NoteAttachmentRepository;
 use App\Util\Uuid;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
@@ -23,7 +25,7 @@ use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
  */
 final class SharingFixtures
 {
-    public const VERSION = 5;
+    public const VERSION = 6;
     public const SEARCH_NOTES = 60;
     public const BULK_NOTES = 105;
     public const DEFAULT_PASSWORD = 'Fixture-Passw0rd!';
@@ -70,6 +72,13 @@ final class SharingFixtures
     ];
 
     /** note => [owner tag keys, owner category key]. Notes not listed have no tags and no category. */
+    /** Files attached to "shared_1": key => [file name, MIME type, base64 content]. */
+    private const ATTACHMENTS = [
+        'pdf' => ['report.pdf', 'application/pdf', 'JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqCjIgMCBvYmo8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PmVuZG9iagozIDAgb2JqPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFswIDAgMjAwIDIwMF0+PmVuZG9iagp0cmFpbGVyPDwvUm9vdCAxIDAgUj4+CiUlRU9GCg=='],
+        'png' => ['pixel.png', 'image/png', 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='],
+        'txt' => ['нотатки 日本語.txt', 'text/plain', 'VW5pY29kZSBmaWxlIG5hbWUgZml4dHVyZS4K'],
+    ];
+
     /** Title words of the search notes: mixed scripts, case pairs and characters that are special in SQL LIKE. */
     private const SEARCH_WORDS = ['Alpha', 'Ünïcödé', '日本語メモ', 'Привет', 'emoji 🎉', '100% done', 'under_score', "O'Brien; DROP", 'Zeta', 'alpha'];
     private const SEARCH_KEYWORDS = ['apple', 'banana', 'cherry'];
@@ -84,6 +93,8 @@ final class SharingFixtures
         private readonly EntityManagerInterface $entityManager,
         private readonly UserPasswordHasherInterface $passwordHasher,
         private readonly Throttle $throttle,
+        private readonly AttachmentStorage $storage,
+        private readonly NoteAttachmentRepository $attachments,
     ) {
     }
 
@@ -148,6 +159,29 @@ final class SharingFixtures
                 $share = new NoteShare($note, $users[$persona], $role, self::id($runId, 'share', $key.'/'.$persona));
                 $this->entityManager->persist($share);
                 $manifest['notes'][$key]['shares'][$persona] = ['id' => $share->getId(), 'role' => $role->value];
+            }
+
+            $manifest['notes'][$key]['attachments'] = [];
+            foreach ('shared_1' === $key ? self::ATTACHMENTS : [] as $attachmentKey => [$filename, $mimeType, $base64]) {
+                $content = (string) base64_decode($base64, true);
+                $attachment = new NoteAttachment(
+                    $note,
+                    $users['owner']->getId(),
+                    $filename,
+                    $this->storage->storeContent($content),
+                    $mimeType,
+                    strlen($content),
+                    hash('sha256', $content),
+                    self::id($runId, 'attachment', $key.'/'.$attachmentKey),
+                );
+                $this->entityManager->persist($attachment);
+                $manifest['notes'][$key]['attachments'][$attachmentKey] = [
+                    'id' => $attachment->getId(),
+                    'filename' => $filename,
+                    'mime_type' => $mimeType,
+                    'size' => $attachment->getSize(),
+                    'sha256' => $attachment->getSha256(),
+                ];
             }
         }
 
@@ -260,6 +294,9 @@ final class SharingFixtures
             return 0;
         }
 
+        // The attachment rows go with the notes; their files have to be removed here.
+        $files = $this->attachments->storageKeysOfOwners($userIds);
+
         $this->entityManager->createQueryBuilder()
             ->delete(AuditEvent::class, 'a')
             ->where('a.actorId IN (:users) OR a.targetUserId IN (:users)')
@@ -275,6 +312,7 @@ final class SharingFixtures
             ->getQuery()
             ->execute();
 
+        $this->storage->delete($files);
         $this->entityManager->clear();
 
         return (int) $removed;

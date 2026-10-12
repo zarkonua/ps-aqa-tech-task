@@ -7,8 +7,10 @@ namespace App\Service;
 use App\Entity\AuditEvent;
 use App\Entity\Category;
 use App\Entity\Note;
+use App\Entity\NoteAttachment;
 use App\Entity\Tag;
 use App\Entity\User;
+use App\Repository\NoteAttachmentRepository;
 use App\Repository\NoteShareRepository;
 use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
@@ -24,6 +26,8 @@ final class NoteMutator
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
         private readonly NoteShareRepository $shares,
+        private readonly NoteAttachmentRepository $attachments,
+        private readonly AttachmentStorage $storage,
         private readonly AuditLogger $audit,
     ) {
     }
@@ -94,8 +98,29 @@ final class NoteMutator
 
     public function delete(Note $note, User $actor): void
     {
+        $files = $this->attachmentKeys($note);
         $this->auditDeletion($note, $actor);
         $this->entityManager->remove($note);
         $this->entityManager->flush();
+        $this->storage->delete($files);
+    }
+
+    /**
+     * Storage keys of the note's attachments. Their rows go with the note (FK cascade);
+     * the files must be removed by the caller once the deletion is committed.
+     *
+     * @return list<string>
+     */
+    public function attachmentKeys(Note $note): array
+    {
+        return array_map(static fn (NoteAttachment $attachment): string => $attachment->getStorageKey(), $this->attachments->findByNote($note));
+    }
+
+    /**
+     * @param list<string> $keys
+     */
+    public function removeFiles(array $keys): void
+    {
+        $this->storage->delete($keys);
     }
 }

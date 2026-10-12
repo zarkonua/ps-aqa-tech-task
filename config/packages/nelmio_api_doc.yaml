@@ -124,6 +124,19 @@ nelmio_api_doc:
                     required: [timezone]
                     properties:
                         timezone: { type: string, description: 'IANA time zone name.', example: 'Europe/Kyiv' }
+                NoteAttachment:
+                    type: object
+                    required: [id, note_id, filename, mime_type, size, sha256, uploaded_by, created_at, download_url]
+                    properties:
+                        id: { type: string, format: uuid, example: '7c1e0d3a-2b4f-4d5e-8a9b-0c1d2e3f4a5b' }
+                        note_id: { type: string, format: uuid, example: '5f1d7a52-6b53-4d0c-8f0e-2d6b3a9c7e10' }
+                        filename: { type: string, description: 'Sanitized name: no path, no control characters, at most 150 characters.', example: 'report.pdf' }
+                        mime_type: { type: string, enum: [image/png, image/jpeg, application/pdf, text/plain, text/csv], example: application/pdf }
+                        size: { type: integer, description: 'Bytes.', example: 48213 }
+                        sha256: { type: string, description: 'Hex SHA-256 of the file.', example: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }
+                        uploaded_by: { type: string, format: uuid, nullable: true, example: 'f0f04231-8b66-4e5f-9d55-2eead364ea02' }
+                        created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                        download_url: { type: string, example: '/api/attachments/7c1e0d3a-2b4f-4d5e-8a9b-0c1d2e3f4a5b/download' }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]
