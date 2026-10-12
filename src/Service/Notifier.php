@@ -38,6 +38,7 @@ final class Notifier
         private readonly MailerInterface $mailer,
         private readonly NoteAccess $access,
         private readonly LoggerInterface $logger,
+        private readonly RunClock $clock,
     ) {
     }
 
@@ -104,7 +105,8 @@ final class Notifier
      */
     public function taskDue(?User $onlyFor = null): int
     {
-        $now = new \DateTimeImmutable();
+        // A user of a test run whose clock was advanced is reminded by that clock.
+        $now = $this->clock->now($onlyFor);
         $queryBuilder = $this->entityManager->createQueryBuilder()
             ->select('t')
             ->from(Task::class, 't')

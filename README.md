@@ -75,6 +75,11 @@ Recommended order for first check:
 This diagram can help you understand the main entities and interactions before test design:
 - [Service Diagram](docs/service-diagram.md)
 
+## Test runs (for whoever runs the tests)
+
+Isolated, resettable sets of test data are managed through a separate, token-protected API and page
+under `/test-admin` (not available in production). See [Test Data Management](docs/test-data-management.md).
+
 ## Fixtures
 
 Seed six personas (owner, viewer, editor, unrelated, unverified, admin) with private and shared notes, tags and categories, isolated by a run ID:

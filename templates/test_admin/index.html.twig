@@ -1,0 +1,54 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Test runs{% endblock %}
+
+{% block stylesheets %}
+    <link rel="stylesheet" href="{{ asset('assets/styles.css') }}">
+{% endblock %}
+
+{% block body %}
+    <main class="app-shell">
+        <header class="page-head">
+            <p class="kicker">Runner only</p>
+            <h1>Test runs</h1>
+        </header>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+
+        <section id="token-section" class="panel section-card">
+            <h2>Sign in</h2>
+            <form id="token-form" class="modal-form" novalidate>
+                <label>Test-admin token <input type="password" id="admin-token" autocomplete="off" required></label>
+                <button type="submit">Continue</button>
+            </form>
+            <small>The token is kept for this browser tab only.</small>
+        </section>
+
+        <section id="runs-section" class="hidden">
+            <div class="panel section-card">
+                <h2>New run</h2>
+                <form id="create-form" class="tasks-toolbar" novalidate>
+                    <label>Fixture <select id="create-fixture"></select></label>
+                    <label>Seed <input type="number" id="create-seed" min="1" max="1000000" value="1"></label>
+                    <label>Run ID (optional) <input type="text" id="create-run-id" maxlength="32" placeholder="generated" autocomplete="off"></label>
+                    <button type="submit">Create run</button>
+                    <button type="button" id="forget-token" class="secondary">Forget token</button>
+                </form>
+                <p id="created-token" class="live-notice hidden" role="status"></p>
+            </div>
+
+            <div class="panel section-card">
+                <h2>Runs <span id="runs-count" class="kanban-count"></span></h2>
+                <div id="runs-list" class="share-list" aria-live="polite"></div>
+            </div>
+
+            <div id="manifest-panel" class="panel section-card hidden">
+                <h2 id="manifest-title">Manifest</h2>
+                <pre id="manifest-body" class="diff-pane" tabindex="0"></pre>
+            </div>
+        </section>
+    </main>
+{% endblock %}
+
+{% block javascripts %}
+    <script src="{{ asset('assets/test-admin.js') }}" defer></script>
+{% endblock %}

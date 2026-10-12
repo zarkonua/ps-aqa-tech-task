@@ -12,6 +12,7 @@ use App\Repository\UserRepository;
 use App\Service\AccountMailer;
 use App\Service\AuditLogger;
 use App\Service\PasswordPolicy;
+use App\Service\RunClock;
 use App\Service\Throttle;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
@@ -47,6 +48,7 @@ final class AccountController extends ApiController
         private readonly Throttle $throttle,
         private readonly AuditLogger $audit,
         private readonly EntityManagerInterface $entityManager,
+        private readonly RunClock $clock,
     ) {
     }
 
@@ -158,7 +160,7 @@ final class AccountController extends ApiController
             $token = 1 === preg_match(self::TOKEN_PATTERN, $payload['token']) ? $this->tokens->findByPlainToken(AccountToken::EMAIL_CHANGE, $payload['token']) : null;
             $problem = match (true) {
                 null === $token, null !== $token->getUsedAt() => 'This confirmation link is invalid or was already used.',
-                $token->isExpired() => 'This confirmation link has expired. Request the change again.',
+                $token->isExpired($this->clock->now($token->getUser())) => 'This confirmation link has expired. Request the change again.',
                 !$this->tokens->consume($token) => 'This confirmation link is invalid or was already used.',
                 default => null,
             };

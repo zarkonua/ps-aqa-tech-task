@@ -11,6 +11,7 @@ use App\Repository\UserRepository;
 use App\Service\AccountMailer;
 use App\Service\AuditLogger;
 use App\Service\PasswordPolicy;
+use App\Service\RunClock;
 use App\Service\Throttle;
 use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Attributes as OA;
@@ -44,6 +45,7 @@ final class PasswordResetController extends ApiController
         private readonly Throttle $throttle,
         private readonly AuditLogger $audit,
         private readonly EntityManagerInterface $entityManager,
+        private readonly RunClock $clock,
     ) {
     }
 
@@ -141,7 +143,7 @@ final class PasswordResetController extends ApiController
             $token = 1 === preg_match(self::TOKEN_PATTERN, $plainToken) ? $this->tokens->findByPlainToken(AccountToken::PASSWORD_RESET, $plainToken) : null;
             $problem = match (true) {
                 null === $token, null !== $token->getUsedAt() => 'This reset link is invalid or was already used. Request a new one.',
-                $token->isExpired() => 'This reset link has expired. Request a new one.',
+                $token->isExpired($this->clock->now($token->getUser())) => 'This reset link has expired. Request a new one.',
                 // Two requests with the same token: only one of them gets to use it.
                 !$this->tokens->consume($token) => 'This reset link is invalid or was already used. Request a new one.',
                 default => null,

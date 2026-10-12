@@ -170,6 +170,17 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     }
 
     /**
+     * For accounts that are created again under the same ID and email (test fixtures):
+     * starting at a version never used before keeps earlier sign-ins from working.
+     */
+    public function startTokensAt(int $version): self
+    {
+        $this->tokenVersion = $version;
+
+        return $this;
+    }
+
+    /**
      * Signs the user out everywhere: every JWT issued so far stops working.
      */
     public function invalidateTokens(): self

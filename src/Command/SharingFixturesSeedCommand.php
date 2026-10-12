@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Command;
 
+use App\Service\RunManager;
 use App\Service\SharingFixtures;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -31,7 +32,9 @@ final class SharingFixturesSeedCommand extends Command
     {
         $this
             ->addArgument('run-id', InputArgument::REQUIRED, 'Run ID that isolates this fixture set (lowercase letters, digits, dashes; max 32).')
-            ->addOption('password', null, InputOption::VALUE_REQUIRED, 'Password for all personas.', SharingFixtures::DEFAULT_PASSWORD);
+            ->addOption('password', null, InputOption::VALUE_REQUIRED, 'Password for all personas.', SharingFixtures::DEFAULT_PASSWORD)
+            ->addOption('fixture', null, InputOption::VALUE_REQUIRED, 'Fixture set: '.implode(', ', array_keys(RunManager::FIXTURES)).'.', 'full')
+            ->addOption('seed', null, InputOption::VALUE_REQUIRED, 'Seed that varies the generated content.', '1');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -42,8 +45,16 @@ final class SharingFixturesSeedCommand extends Command
             return Command::FAILURE;
         }
 
+        $fixture = (string) $input->getOption('fixture');
+        $seed = filter_var($input->getOption('seed'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 1_000_000]]);
+        if (!isset(RunManager::FIXTURES[$fixture]) || false === $seed) {
+            $output->writeln('<error>Unknown --fixture, or --seed is not a whole number from 1 to 1000000.</error>');
+
+            return Command::INVALID;
+        }
+
         try {
-            $manifest = $this->fixtures->seed((string) $input->getArgument('run-id'), (string) $input->getOption('password'));
+            $manifest = ['fixture' => $fixture] + $this->fixtures->seed((string) $input->getArgument('run-id'), (string) $input->getOption('password'), $seed, RunManager::FIXTURES[$fixture]);
         } catch (\InvalidArgumentException $e) {
             $output->writeln(sprintf('<error>%s</error>', $e->getMessage()));
 

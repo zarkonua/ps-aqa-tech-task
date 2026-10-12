@@ -53,7 +53,8 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame([], $first['notes']['private_1']['shares']);
         self::assertSame(['viewer' => 'viewer', 'editor' => 'editor'], array_map(static fn (array $share): string => $share['role'], $first['notes']['shared_1']['shares']));
         self::assertSame('owner.'.self::RUN_A.'@qa-fixtures.test', $first['users']['owner']['email']);
-        self::assertSame(10, $first['version']);
+        self::assertSame(11, $first['version']);
+        self::assertSame([1, SharingFixtures::PARTS], [$first['seed'], $first['parts']]);
         self::assertCount(8, $first['audit_events']);
         self::assertSame([2, 1], [count(array_filter($first['notifications']['viewer'], static fn (array $n): bool => !$n['read'])), count($first['notifications']['editor']) - 1]);
         self::assertCount(20, $first['tasks']);

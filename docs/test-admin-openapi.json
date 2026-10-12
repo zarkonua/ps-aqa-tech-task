@@ -1,0 +1,1009 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "QA Task — test-data API (runner only)",
+    "version": "1.0.0",
+    "description": "Creates, resets and removes isolated test runs. Not part of the application's public API: it exists only outside production and only when TEST_ADMIN_TOKEN is set, and it accepts its own tokens, never a user's JWT. Keep this document and the tokens away from the agents under test."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4444"
+    }
+  ],
+  "security": [
+    {
+      "adminToken": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "adminToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "TEST_ADMIN_TOKEN: may do everything."
+      },
+      "runToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The run_token returned when a run is created: may read, reset, advance and delete that run only."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ValidationError": {
+        "type": "object",
+        "required": [
+          "error",
+          "violations"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "example": "Validation failed."
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "propertyPath": {
+                  "type": "string",
+                  "example": "fixture"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Run": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "fixture",
+          "fixture_version",
+          "seed",
+          "manifest_hash",
+          "resets",
+          "clock_offset_seconds",
+          "clock_now",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "example": "r3f9a1c2b7d4"
+          },
+          "fixture": {
+            "type": "string",
+            "enum": [
+              "full",
+              "basic-notes",
+              "sharing-rbac",
+              "search-edge",
+              "bulk-mixed",
+              "attachments",
+              "concurrency",
+              "async-faults"
+            ]
+          },
+          "fixture_version": {
+            "type": "integer",
+            "example": 11
+          },
+          "seed": {
+            "type": "integer",
+            "example": 1
+          },
+          "manifest_hash": {
+            "type": "string",
+            "description": "SHA-256 of the manifest without run-specific identifiers. Runs with the same fixture, fixture version and seed have the same hash."
+          },
+          "resets": {
+            "type": "integer",
+            "example": 0
+          },
+          "clock_offset_seconds": {
+            "type": "integer",
+            "description": "How far the run's clock is ahead.",
+            "example": 0
+          },
+          "clock_now": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The current time as the run's personas experience it."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Manifest": {
+        "type": "object",
+        "description": "Everything the run contains, with the identifiers tests need: users (id, email) and their shared password, notes with shares, attachments and versions, tags, categories, tasks, notifications, audit events, refused reset tokens. Which keys are filled depends on the fixture.",
+        "example": {
+          "fixture": "basic-notes",
+          "version": 11,
+          "run_id": "r3f9a1c2b7d4",
+          "seed": 1,
+          "parts": [],
+          "password": "Fixture-Passw0rd!",
+          "users": {
+            "owner": {
+              "id": "97ee0c01-…",
+              "email": "owner.r3f9a1c2b7d4@qa-fixtures.test"
+            }
+          },
+          "notes": {
+            "shared_1": {
+              "id": "fef44a65-…",
+              "title": "[r3f9a1c2b7d4] shared 1 note",
+              "version": 1,
+              "shares": {
+                "viewer": {
+                  "id": "f3c3f200-…",
+                  "role": "viewer"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/test-admin/fixtures": {
+      "get": {
+        "summary": "List the fixture sets.",
+        "responses": {
+          "200": {
+            "description": "Fixture sets and the optional parts each includes.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "fixture_version": 11,
+                  "fixtures": [
+                    {
+                      "name": "basic-notes",
+                      "parts": []
+                    },
+                    {
+                      "name": "search-edge",
+                      "parts": [
+                        "search"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/runs": {
+      "get": {
+        "summary": "List the runs.",
+        "responses": {
+          "200": {
+            "description": "All runs, oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Run"
+                      }
+                    },
+                    "max": {
+                      "type": "integer",
+                      "example": 50
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a run.",
+        "description": "Seeds the personas (owner, viewer, editor, unrelated, unverified, admin) and the data of the chosen fixture under a new run ID. Emails are <persona>.<run_id>@qa-fixtures.test. The same fixture and seed always give the same content; different run IDs never share data.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "fixture": {
+                    "type": "string",
+                    "default": "full",
+                    "enum": [
+                      "full",
+                      "basic-notes",
+                      "sharing-rbac",
+                      "search-edge",
+                      "bulk-mixed",
+                      "attachments",
+                      "concurrency",
+                      "async-faults"
+                    ]
+                  },
+                  "seed": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000,
+                    "default": 1
+                  },
+                  "run_id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+                    "description": "Generated when left out."
+                  }
+                }
+              },
+              "example": {
+                "fixture": "sharing-rbac",
+                "seed": 7
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Run created. run_token is shown only here.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Run"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "run_token": {
+                          "type": "string"
+                        },
+                        "manifest": {
+                          "$ref": "#/components/schemas/Manifest"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Body is not a JSON object.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid JSON payload."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run with this ID exists, or it is being changed by another request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run \"demo\" already exists. Reset it, or choose another ID."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown fixture, seed out of range, malformed run ID, unknown field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The limit of 50 runs is reached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "The limit of 50 runs is reached. Delete runs that are no longer needed."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/runs/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "example": "r3f9a1c2b7d4"
+        }
+      ],
+      "get": {
+        "summary": "Get the status of a run.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run (administrator token only; a run token gets 401 or 403).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove a run and everything in it.",
+        "description": "Users, notes, shares, files, tasks, notifications, audit records of its personas, rate-limit counters, realtime events and captured mail.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed."
+          },
+          "409": {
+            "description": "The run is being changed by another request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run \"demo\" is being changed by another request. Try again in a moment."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run (administrator token only; a run token gets 401 or 403).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/runs/{id}/manifest": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "example": "r3f9a1c2b7d4"
+        }
+      ],
+      "get": {
+        "summary": "Get the manifest of a run.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run and its manifest.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Run"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "manifest": {
+                          "$ref": "#/components/schemas/Manifest"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run (administrator token only; a run token gets 401 or 403).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/runs/{id}/reset": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "example": "r3f9a1c2b7d4"
+        }
+      ],
+      "post": {
+        "summary": "Bring a run back to its initial state.",
+        "description": "Everything the tests changed is gone and the fixture is seeded again with the same identifiers. Sign-ins from before the reset stop working, the clock goes back to real time, captured mail of the run is deleted from MailHog. Resetting twice is the same as resetting once.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reset.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Run"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mail_deleted": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Messages removed from MailHog; null when MailHog is not configured or not reachable."
+                        },
+                        "manifest": {
+                          "$ref": "#/components/schemas/Manifest"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run is being changed by another request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run \"demo\" is being changed by another request. Try again in a moment."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run (administrator token only; a run token gets 401 or 403).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/runs/{id}/advance-clock": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "example": "r3f9a1c2b7d4"
+        }
+      ],
+      "post": {
+        "summary": "Move a run's clock forward.",
+        "description": "For the personas of this run only, the following then happen as if that much time had passed: password-reset and email-confirmation links expire, and tasks become due. Other runs and real users are not affected. Not shifted: token (JWT) lifetime, rate-limit windows, presence, timestamps written to records.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "seconds"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 315360000
+                  }
+                }
+              },
+              "example": {
+                "seconds": 3600
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The run with its new offset.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Body is not a JSON object.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid JSON payload."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The clock would be more than ten years ahead, or the run is being changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "The clock of a run cannot be more than ten years ahead. Reset the run to start over."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "seconds missing, not a whole number, or not positive.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run (administrator token only; a run token gets 401 or 403).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/openapi.json": {
+      "get": {
+        "summary": "This document.",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3 document."
+          },
+          "401": {
+            "description": "No token, or a token that is neither the administrator token nor a run token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure; no internal details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Internal server error."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

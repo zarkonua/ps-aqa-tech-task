@@ -30,7 +30,9 @@ use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
  */
 final class SharingFixtures
 {
-    public const VERSION = 10;
+    public const VERSION = 11;
+    /** Optional parts of the fixture set; personas, the four base notes, their shares and the taxonomy are always there. */
+    public const PARTS = ['history', 'attachments', 'search', 'bulk', 'tasks', 'notifications', 'audit'];
     public const TASKS = 20;
     public const SEARCH_NOTES = 60;
     public const BULK_NOTES = 105;
@@ -110,16 +112,24 @@ final class SharingFixtures
      *
      * @return array<string, mixed>
      */
-    public function seed(string $runId, string $password = self::DEFAULT_PASSWORD): array
+    /**
+     * @param int          $seed         varies the generated content (which words, keywords and priorities go where);
+     *                                   the same seed always gives the same content
+     * @param list<string> $parts        which optional parts to include (see PARTS)
+     * @param int          $tokenVersion token version the personas start at; raising it invalidates earlier sign-ins
+     */
+    public function seed(string $runId, string $password = self::DEFAULT_PASSWORD, int $seed = 1, array $parts = self::PARTS, int $tokenVersion = 0): array
     {
+        $has = static fn (string $part): bool => in_array($part, $parts, true);
         $this->purge($runId);
 
-        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => [], 'tasks' => [], 'notifications' => [], 'audit_events' => []];
+        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'seed' => $seed, 'parts' => array_values(array_intersect(self::PARTS, $parts)), 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => [], 'tasks' => [], 'notifications' => [], 'audit_events' => []];
 
         $users = [];
         foreach (self::PERSONAS as $persona) {
             $user = (new User())->setEmail(self::email($runId, $persona))->setIsVerified('unverified' !== $persona)->setIsAdmin('admin' === $persona);
             self::forceId($user, self::id($runId, 'user', $persona));
+            $user->startTokensAt($tokenVersion);
             $user->setPasswordHash($this->passwordHasher->hashPassword($user, $password));
             $this->entityManager->persist($user);
             $users[$persona] = $user;
@@ -157,7 +167,7 @@ final class SharingFixtures
             self::forceId($note, self::id($runId, 'note', $key));
 
             // "shared_1" has a history: two earlier texts (by the owner, then the editor) before the current one.
-            $drafts = 'shared_1' === $key
+            $drafts = 'shared_1' === $key && $has('history')
                 ? [['owner', $title.' (first draft)', "First draft.\nLine that will be removed.\n<b>markup</b> stays text."], ['editor', $title, "Second draft: ünïcödé, 日本語, 💡.\nA line added by the editor."]]
                 : [];
             foreach ($drafts as $index => [$persona, $draftTitle, $draftContent]) {
@@ -178,7 +188,7 @@ final class SharingFixtures
             }
 
             $manifest['notes'][$key]['attachments'] = [];
-            foreach ('shared_1' === $key ? self::ATTACHMENTS : [] as $attachmentKey => [$filename, $mimeType, $base64]) {
+            foreach ('shared_1' === $key && $has('attachments') ? self::ATTACHMENTS : [] as $attachmentKey => [$filename, $mimeType, $base64]) {
                 $content = (string) base64_decode($base64, true);
                 $attachment = new NoteAttachment(
                     $note,
@@ -202,7 +212,7 @@ final class SharingFixtures
         }
 
         $timestamps = [];
-        foreach ($this->searchNotes($runId) as $key => $definition) {
+        foreach ($has('search') ? $this->searchNotes($runId, $seed) : [] as $key => $definition) {
             $note = (new Note())->setOwner($users[$definition['owner']])->setTitle($definition['title'])->setContent($definition['content']);
             self::forceId($note, $definition['id']);
             $note->replaceTags(array_map(static fn (string $tagKey): Tag => $items['tags']['owner'][$tagKey], $definition['tags']));
@@ -220,7 +230,7 @@ final class SharingFixtures
         // some linked to "shared_1", which all three can see) and four of the editor (two assigned to the owner).
         $positions = [];
         $sharedNote = $this->entityManager->getReference(Note::class, $manifest['notes']['shared_1']['id']);
-        for ($i = 1; $i <= self::TASKS; ++$i) {
+        for ($i = 1; $i <= ($has('tasks') ? self::TASKS : 0); ++$i) {
             $key = sprintf('task_%02d', $i);
             $ownerPersona = 0 === $i % 5 ? 'editor' : 'owner';
             $assigneePersona = match (true) {
@@ -236,7 +246,7 @@ final class SharingFixtures
             $task = (new Task($users[$ownerPersona], sprintf('[%s] Task %02d', $runId, $i), self::id($runId, 'task', $key)))
                 ->setDescription(sprintf('Fixture task %02d.', $i))
                 ->setStatus($status)
-                ->setPriority(TaskPriority::cases()[$i % 3])
+                ->setPriority(TaskPriority::cases()[($i + $seed - 1) % 3])
                 ->setDueAt($dueAt)
                 ->setAssignee(null === $assigneePersona ? null : $users[$assigneePersona])
                 ->setNote($linked ? $sharedNote : null)
@@ -261,7 +271,7 @@ final class SharingFixtures
         // created and deleted again (it exists only in the audit log), and one event of an outsider.
         $deletedNoteId = self::id($runId, 'note', 'deleted_1');
         $sharedId = $manifest['notes']['shared_1']['id'];
-        $auditEvents = [
+        $auditEvents = !$has('audit') ? [] : [
             [AuditEvent::NOTE_CREATED, 'owner', $sharedId, null, null, ['title' => ['length_after' => 30], 'content' => ['length_after' => 60], 'version' => 1]],
             [AuditEvent::SHARE_GRANTED, 'owner', $sharedId, $manifest['notes']['shared_1']['shares']['viewer']['id'], 'viewer', ['role' => 'viewer']],
             [AuditEvent::SHARE_GRANTED, 'owner', $sharedId, $manifest['notes']['shared_1']['shares']['editor']['id'], 'editor', ['role' => 'editor']],
@@ -277,18 +287,20 @@ final class SharingFixtures
             $this->entityManager->persist($event);
             $manifest['audit_events'][] = ['id' => $event->getId(), 'type' => $type, 'actor' => $actorPersona, 'note_id' => $noteId, 'correlation_id' => $event->getCorrelationId()];
         }
-        $manifest['deleted_note_id'] = $deletedNoteId;
+        $manifest['deleted_note_id'] = $has('audit') ? $deletedNoteId : null;
 
         // Notifications as the API would have created them: unread and read ones, about notes and tasks.
         $notifications = [
             ['viewer', Notification::SHARE_GRANTED, 'owner', Notification::RESOURCE_NOTE, $manifest['notes']['shared_1']['id'], false],
             ['viewer', Notification::SHARE_GRANTED, 'owner', Notification::RESOURCE_NOTE, $manifest['notes']['shared_2']['id'], false],
-            ['viewer', Notification::TASK_ASSIGNED, 'owner', Notification::RESOURCE_TASK, $manifest['tasks']['task_07']['id'], true],
+            ['viewer', Notification::TASK_ASSIGNED, 'owner', Notification::RESOURCE_TASK, $manifest['tasks']['task_07']['id'] ?? null, true],
             ['editor', Notification::SHARE_GRANTED, 'owner', Notification::RESOURCE_NOTE, $manifest['notes']['shared_1']['id'], true],
-            ['editor', Notification::TASK_ASSIGNED, 'owner', Notification::RESOURCE_TASK, $manifest['tasks']['task_03']['id'], false],
-            ['owner', Notification::TASK_ASSIGNED, 'editor', Notification::RESOURCE_TASK, $manifest['tasks']['task_10']['id'], false],
-            ['owner', Notification::TASK_COMPLETED, 'editor', Notification::RESOURCE_TASK, $manifest['tasks']['task_12']['id'], true],
+            ['editor', Notification::TASK_ASSIGNED, 'owner', Notification::RESOURCE_TASK, $manifest['tasks']['task_03']['id'] ?? null, false],
+            ['owner', Notification::TASK_ASSIGNED, 'editor', Notification::RESOURCE_TASK, $manifest['tasks']['task_10']['id'] ?? null, false],
+            ['owner', Notification::TASK_COMPLETED, 'editor', Notification::RESOURCE_TASK, $manifest['tasks']['task_12']['id'] ?? null, true],
         ];
+        // Without the tasks part there is nothing for task notifications to point at.
+        $notifications = $has('notifications') ? array_values(array_filter($notifications, static fn (array $n): bool => null !== $n[4])) : [];
         $notificationRows = [];
         foreach ($notifications as $index => [$persona, $type, $actorPersona, $resourceType, $resourceId, $read]) {
             $id = self::id($runId, 'notification', (string) $index);
@@ -308,7 +320,7 @@ final class SharingFixtures
         }
 
         // Plain notes of the owner, a few more than one bulk request accepts. All share one timestamp.
-        for ($i = 1; $i <= self::BULK_NOTES; ++$i) {
+        for ($i = 1; $i <= ($has('bulk') ? self::BULK_NOTES : 0); ++$i) {
             $key = sprintf('bulk_%03d', $i);
             $note = (new Note())->setOwner($users['owner'])->setTitle(sprintf('[%s] bulk %03d', $runId, $i))->setContent('Bulk fixture note.');
             self::forceId($note, self::id($runId, 'note', $key));
@@ -343,7 +355,7 @@ final class SharingFixtures
      *
      * @return array<string, array<string, mixed>>
      */
-    private function searchNotes(string $runId): array
+    private function searchNotes(string $runId, int $seed): array
     {
         $notes = [];
         for ($i = 1; $i <= self::SEARCH_NOTES; ++$i) {
@@ -366,8 +378,8 @@ final class SharingFixtures
 
             $notes[$key] = [
                 'id' => self::id($runId, 'note', $key),
-                'title' => sprintf('[%s] %s %02d', $runId, self::SEARCH_WORDS[$i % 10], $i),
-                'content' => sprintf('Search fixture %02d: %s', $i, self::SEARCH_KEYWORDS[$i % 3]),
+                'title' => sprintf('[%s] %s %02d', $runId, self::SEARCH_WORDS[($i + $seed - 1) % 10], $i),
+                'content' => sprintf('Search fixture %02d: %s', $i, self::SEARCH_KEYWORDS[($i + $seed - 1) % 3]),
                 'owner' => $ownedByOwner ? 'owner' : 'editor',
                 'created_at' => (new \DateTimeImmutable('2026-01-01T00:00:00+00:00'))->modify(sprintf('+%d hours', $i))->format(\DATE_ATOM),
                 'updated_at' => (new \DateTimeImmutable('2026-02-01T12:00:00+00:00'))->modify(sprintf('+%d days', intdiv($i - 1, 6)))->format(\DATE_ATOM),
@@ -414,7 +426,11 @@ final class SharingFixtures
             $this->entityManager->createQueryBuilder()->select('n.id')->from(Note::class, 'n')->where('IDENTITY(n.owner) IN (:users)')->setParameter('users', $userIds)->getQuery()->getScalarResult(),
             'id',
         );
-        $this->realtime->forget($noteIds, $userIds);
+        // Fixture notes a test deleted are no longer among the users' notes, but their last event is still there.
+        foreach ([...array_keys(self::NOTES), ...array_map(static fn (int $i): string => sprintf('search_%02d', $i), range(1, self::SEARCH_NOTES)), ...array_map(static fn (int $i): string => sprintf('bulk_%03d', $i), range(1, self::BULK_NOTES))] as $key) {
+            $noteIds[] = self::id($runId, 'note', $key);
+        }
+        $this->realtime->forget(array_values(array_unique($noteIds)), $userIds);
 
         $this->entityManager->createQueryBuilder()
             ->delete(AuditEvent::class, 'a')
