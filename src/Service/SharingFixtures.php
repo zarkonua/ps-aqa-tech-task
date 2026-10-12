@@ -11,6 +11,7 @@ use App\Entity\Note;
 use App\Entity\NoteAttachment;
 use App\Entity\NoteRevision;
 use App\Entity\NoteShare;
+use App\Entity\Notification;
 use App\Entity\Tag;
 use App\Entity\Task;
 use App\Entity\User;
@@ -29,7 +30,7 @@ use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
  */
 final class SharingFixtures
 {
-    public const VERSION = 8;
+    public const VERSION = 9;
     public const TASKS = 20;
     public const SEARCH_NOTES = 60;
     public const BULK_NOTES = 105;
@@ -112,7 +113,7 @@ final class SharingFixtures
     {
         $this->purge($runId);
 
-        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => [], 'tasks' => []];
+        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => [], 'tasks' => [], 'notifications' => []];
 
         $users = [];
         foreach (self::PERSONAS as $persona) {
@@ -255,6 +256,34 @@ final class SharingFixtures
             ];
         }
 
+        // Notifications as the API would have created them: unread and read ones, about notes and tasks.
+        $notifications = [
+            ['viewer', Notification::SHARE_GRANTED, 'owner', Notification::RESOURCE_NOTE, $manifest['notes']['shared_1']['id'], false],
+            ['viewer', Notification::SHARE_GRANTED, 'owner', Notification::RESOURCE_NOTE, $manifest['notes']['shared_2']['id'], false],
+            ['viewer', Notification::TASK_ASSIGNED, 'owner', Notification::RESOURCE_TASK, $manifest['tasks']['task_07']['id'], true],
+            ['editor', Notification::SHARE_GRANTED, 'owner', Notification::RESOURCE_NOTE, $manifest['notes']['shared_1']['id'], true],
+            ['editor', Notification::TASK_ASSIGNED, 'owner', Notification::RESOURCE_TASK, $manifest['tasks']['task_03']['id'], false],
+            ['owner', Notification::TASK_ASSIGNED, 'editor', Notification::RESOURCE_TASK, $manifest['tasks']['task_10']['id'], false],
+            ['owner', Notification::TASK_COMPLETED, 'editor', Notification::RESOURCE_TASK, $manifest['tasks']['task_12']['id'], true],
+        ];
+        $notificationRows = [];
+        foreach ($notifications as $index => [$persona, $type, $actorPersona, $resourceType, $resourceId, $read]) {
+            $id = self::id($runId, 'notification', (string) $index);
+            $createdAt = (new \DateTimeImmutable())->modify(sprintf('-%d minutes', 10 * (count($notifications) - $index)));
+            $notificationRows[] = [
+                'id' => $id,
+                'user_id' => $users[$persona]->getId(),
+                'type' => $type,
+                'event_id' => hash('sha256', 'fixture:'.$id),
+                'actor_id' => $users[$actorPersona]->getId(),
+                'resource_type' => $resourceType,
+                'resource_id' => $resourceId,
+                'created_at' => $createdAt->format('Y-m-d H:i:s'),
+                'read_at' => $read ? $createdAt->modify('+5 minutes')->format('Y-m-d H:i:s') : null,
+            ];
+            $manifest['notifications'][$persona][] = ['id' => $id, 'type' => $type, 'resource_type' => $resourceType, 'resource_id' => $resourceId, 'read' => $read];
+        }
+
         // Plain notes of the owner, a few more than one bulk request accepts. All share one timestamp.
         for ($i = 1; $i <= self::BULK_NOTES; ++$i) {
             $key = sprintf('bulk_%03d', $i);
@@ -267,6 +296,10 @@ final class SharingFixtures
         }
 
         $this->entityManager->flush();
+
+        foreach ($notificationRows as $row) {
+            $this->entityManager->getConnection()->insert('notifications', $row);
+        }
 
         // Fixed timestamps (several notes share each one), written past the entity's own clock.
         foreach ($timestamps as $id => [$createdAt, $updatedAt]) {

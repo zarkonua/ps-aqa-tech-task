@@ -426,6 +426,58 @@ button:disabled {
     font-weight: 600;
 }
 
+.badge--count {
+    margin: 0 0 0 4px;
+    border-color: var(--danger);
+    background: var(--danger);
+    color: #fff;
+}
+
+.notification-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    max-height: 420px;
+    overflow: auto;
+    list-style: none;
+}
+
+.notification-item {
+    display: grid;
+    gap: 4px;
+    padding: 9px;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.notification-item--unread {
+    border-left-color: var(--accent);
+    background: #fffaf2;
+}
+
+.notification-message {
+    overflow-wrap: anywhere;
+}
+
+.notification-item--unread .notification-message {
+    font-weight: 700;
+}
+
+.preference-list {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.preference-list .color-toggle {
+    padding-bottom: 4px;
+}
+
 .tasks-toolbar {
     display: flex;
     flex-wrap: wrap;

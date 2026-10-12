@@ -15,6 +15,7 @@ use App\Repository\TaskRepository;
 use App\Security\NoteAccess;
 use App\Service\AuditLogger;
 use App\Service\Collaborators;
+use App\Service\Notifier;
 use App\Util\Uuid;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\OptimisticLockException;
@@ -44,6 +45,7 @@ final class TaskController extends ApiController
         private readonly Collaborators $collaborators,
         private readonly AuditLogger $audit,
         private readonly EntityManagerInterface $entityManager,
+        private readonly Notifier $notifier,
     ) {
     }
 
@@ -185,6 +187,7 @@ final class TaskController extends ApiController
             $this->entityManager->persist($task);
             $this->audit->record(AuditEvent::TASK_CREATED, $user, $task->getNote()?->getId(), targetUserId: $task->getAssignee()?->getId(), subjectId: $task->getId());
             $this->entityManager->flush();
+            $this->notifier->taskAssigned($task, $user);
 
             return $this->json($this->taskData($task, $user), Response::HTTP_CREATED, ['Location' => '/api/tasks/'.$task->getId()]);
         });
@@ -336,6 +339,9 @@ final class TaskController extends ApiController
             } catch (OptimisticLockException) {
                 return $this->stale();
             }
+            if (in_array('assignee_id', $changed, true)) {
+                $this->notifier->taskAssigned($task, $user);
+            }
 
             return $this->json($this->taskData($task, $user));
         });
@@ -401,6 +407,9 @@ final class TaskController extends ApiController
                 $this->entityManager->flush();
             } catch (OptimisticLockException) {
                 return $this->stale();
+            }
+            if (TaskStatus::Done === $target) {
+                $this->notifier->taskCompleted($task, $user);
             }
 
             return $this->json($this->taskData($task, $user));

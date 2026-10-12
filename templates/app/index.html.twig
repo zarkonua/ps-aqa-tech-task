@@ -77,6 +77,9 @@
                     <button id="nav-tags-button" class="secondary" type="button">Tags</button>
                     <button id="nav-tasks-button" class="secondary" type="button">Tasks</button>
                     <button id="nav-profile-button" class="secondary" type="button">Profile</button>
+                    <button id="notifications-button" class="secondary" type="button" aria-haspopup="dialog">
+                        Notifications <span id="notifications-badge" class="badge badge--count hidden" aria-hidden="true">0</span>
+                    </button>
                     <button id="logout-button" class="danger" type="button">Log Out</button>
                 </div>
             </div>
@@ -264,6 +267,21 @@
                             <button type="submit">Save settings</button>
                         </form>
                         <p id="settings-feedback" class="share-feedback" role="alert" aria-live="polite"></p>
+
+                        <h3>Notification emails</h3>
+                        <form id="notification-preferences-form" class="modal-form" novalidate>
+                            <fieldset class="preference-list">
+                                <legend class="share-empty">Also send me an email when…</legend>
+                                <label class="color-toggle"><input type="checkbox" name="share_granted"> a note is shared with me</label>
+                                <label class="color-toggle"><input type="checkbox" name="share_revoked"> my access to a note is removed</label>
+                                <label class="color-toggle"><input type="checkbox" name="task_assigned"> a task is assigned to me</label>
+                                <label class="color-toggle"><input type="checkbox" name="task_due"> a task of mine is due soon</label>
+                                <label class="color-toggle"><input type="checkbox" name="task_completed"> a task I share is completed</label>
+                            </fieldset>
+                            <button type="submit">Save email choices</button>
+                        </form>
+                        <p id="notification-preferences-feedback" class="share-feedback" role="alert" aria-live="polite"></p>
+                        <p class="share-empty">Sign-up, password reset and email change messages are always sent.</p>
 
                         <h3>Password</h3>
                         <p class="share-empty">Changing the password signs you out on every other device.</p>

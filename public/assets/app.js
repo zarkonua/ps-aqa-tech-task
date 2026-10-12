@@ -50,6 +50,10 @@ const bulkActionsEl = document.getElementById("bulk-actions");
 const bulkCategoryEl = document.getElementById("bulk-category");
 const bulkTagEl = document.getElementById("bulk-tag");
 const bulkReportEl = document.getElementById("bulk-report");
+const notificationsButtonEl = document.getElementById("notifications-button");
+const notificationsBadgeEl = document.getElementById("notifications-badge");
+const notificationPreferencesFormEl = document.getElementById("notification-preferences-form");
+const notificationPreferencesFeedbackEl = document.getElementById("notification-preferences-feedback");
 const forgotButtonEl = document.getElementById("forgot-password-button");
 const forgotCardEl = document.getElementById("forgot-password-card");
 const forgotFormEl = document.getElementById("forgot-password-form");
@@ -110,6 +114,10 @@ const appDomReady = [
     activeFiltersEl,
     activeFilterChipsEl,
     resetFiltersEl,
+    notificationsButtonEl,
+    notificationsBadgeEl,
+    notificationPreferencesFormEl,
+    notificationPreferencesFeedbackEl,
     bulkSelectPageEl,
     bulkCountEl,
     bulkActionsEl,
@@ -345,6 +353,8 @@ function setActiveNav(path) {
 function showAccountView(path) {
     authSection.classList.add("hidden");
     accountSection.classList.remove("hidden");
+    // Moving around the app is a good moment to bring the bell up to date.
+    refreshUnreadNotifications();
 
     const isProfile = path === PATH_PROFILE;
     const isShared = path === PATH_SHARED;
@@ -1285,6 +1295,7 @@ async function loadSettings() {
 }
 
 async function loadAccountPage() {
+    loadNotificationPreferences();
     setFeedback(changeEmailFeedbackEl, "");
     setFeedback(settingsFeedbackEl, "");
     try {
@@ -1297,6 +1308,7 @@ async function loadAccountPage() {
 
 // The session is over (password or email changed elsewhere, or the token expired).
 function signOutLocally(message, isError = false) {
+    setUnreadNotifications(0);
     selectedNotes.clear();
     clearToken();
     notesCache = [];
@@ -2025,6 +2037,215 @@ function openHistoryDialog(note, canEdit) {
         body.querySelector('[data-action="close"]').focus();
         load();
     });
+}
+
+// ----- Notifications -----
+
+let unreadNotifications = 0;
+
+function setUnreadNotifications(count) {
+    unreadNotifications = Number.isFinite(count) && count > 0 ? count : 0;
+    notificationsBadgeEl.textContent = unreadNotifications > 99 ? "99+" : String(unreadNotifications);
+    notificationsBadgeEl.classList.toggle("hidden", unreadNotifications === 0);
+    // The badge is decoration; the count is in the button's name for assistive technology.
+    notificationsButtonEl.setAttribute(
+        "aria-label",
+        unreadNotifications === 0 ? "Notifications" : `Notifications, ${unreadNotifications} unread`,
+    );
+}
+
+async function refreshUnreadNotifications() {
+    if (!getToken()) {
+        return;
+    }
+    try {
+        const payload = await api("/api/notifications/unread-count");
+        setUnreadNotifications(payload?.unread);
+    } catch {
+        // The badge keeps its last value; the next refresh tries again.
+    }
+}
+
+function openNotificationsDialog() {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Notifications");
+
+        const body = document.createElement("div");
+        body.className = "modal-form";
+        body.innerHTML = `
+            <div class="list-meta">
+                <span data-role="summary" aria-live="polite"></span>
+                <button type="button" class="secondary" data-action="read-all">Mark all as read</button>
+            </div>
+            <p class="share-feedback" role="alert"></p>
+            <ul class="notification-list" data-role="list"></ul>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="more">Show older</button>
+                <button type="button" class="secondary" data-action="close">Close</button>
+            </div>
+        `;
+        const listEl = body.querySelector('[data-role="list"]');
+        const summaryEl = body.querySelector('[data-role="summary"]');
+        const feedbackEl = body.querySelector(".share-feedback");
+        const moreButton = body.querySelector('[data-action="more"]');
+        const readAllButton = body.querySelector('[data-action="read-all"]');
+        let page = 0;
+        let closed = false;
+        let deactivate = () => {};
+        const close = (destination) => {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            backdrop.remove();
+            deactivate();
+            resolve(destination);
+        };
+
+        const updateSummary = (total, unread) => {
+            setUnreadNotifications(unread);
+            summaryEl.textContent = total === 0 ? "" : `${unread} unread of ${total}`;
+            readAllButton.disabled = unread === 0;
+        };
+
+        const addItem = (notification) => {
+            const item = document.createElement("li");
+            item.className = "notification-item";
+            item.classList.toggle("notification-item--unread", !notification.read_at);
+            item.innerHTML = `
+                <p class="notification-message"></p>
+                <small></small>
+                <div class="kanban-actions"></div>
+            `;
+            item.querySelector(".notification-message").textContent = notification.message;
+            item.querySelector("small").textContent = `${formatTimestamp(notification.created_at)}${notification.read_at ? "" : " · unread"}`;
+            const actions = item.querySelector(".kanban-actions");
+
+            const markRead = async () => {
+                if (notification.read_at) {
+                    return true;
+                }
+                try {
+                    const updated = await api(`/api/notifications/${notification.id}/read`, {method: "POST"});
+                    notification.read_at = updated.read_at;
+                    item.classList.remove("notification-item--unread");
+                    item.querySelector("small").textContent = formatTimestamp(notification.created_at);
+                    actions.querySelector('[data-action="read"]')?.remove();
+                    await refreshUnreadNotifications();
+                    summaryEl.textContent = summaryEl.textContent.replace(/^\d+/, String(unreadNotifications));
+                    readAllButton.disabled = unreadNotifications === 0;
+                    return true;
+                } catch (error) {
+                    setFeedback(feedbackEl, error.status === 404 ? "This notification no longer exists." : error.message, true);
+                    return false;
+                }
+            };
+
+            if (notification.link) {
+                const open = document.createElement("button");
+                open.type = "button";
+                open.className = "secondary";
+                open.textContent = notification.resource?.type === "task" ? "Open tasks" : "Open shared notes";
+                open.addEventListener("click", async () => {
+                    await markRead();
+                    close(notification.link);
+                });
+                actions.appendChild(open);
+            }
+            if (!notification.read_at) {
+                const read = document.createElement("button");
+                read.type = "button";
+                read.className = "secondary";
+                read.dataset.action = "read";
+                read.textContent = "Mark as read";
+                read.setAttribute("aria-label", `Mark as read: ${notification.message}`);
+                read.addEventListener("click", markRead);
+                actions.appendChild(read);
+            }
+            listEl.appendChild(item);
+        };
+
+        async function loadMore() {
+            moreButton.disabled = true;
+            if (page === 0) {
+                listEl.innerHTML = `<li class="share-empty">Loading…</li>`;
+            }
+            try {
+                const payload = await api(`/api/notifications?limit=20&page=${page + 1}`);
+                if (closed) {
+                    return;
+                }
+                if (page === 0) {
+                    listEl.innerHTML = "";
+                }
+                page += 1;
+                const items = Array.isArray(payload?.items) ? payload.items : [];
+                items.forEach(addItem);
+                if (payload.total === 0) {
+                    listEl.innerHTML = `<li class="share-empty">No notifications yet.</li>`;
+                }
+                updateSummary(payload.total, payload.unread);
+                moreButton.classList.toggle("hidden", page * 20 >= payload.total);
+                moreButton.disabled = false;
+            } catch (error) {
+                if (closed || error.status === 401) {
+                    close(null);
+                    return;
+                }
+                if (page === 0) {
+                    listEl.innerHTML = "";
+                }
+                feedbackEl.textContent = "";
+                setFeedback(feedbackEl, "Could not load notifications. ", true);
+                const retry = document.createElement("button");
+                retry.type = "button";
+                retry.className = "secondary";
+                retry.textContent = "Retry";
+                retry.addEventListener("click", () => {
+                    setFeedback(feedbackEl, "");
+                    loadMore();
+                });
+                feedbackEl.appendChild(retry);
+            }
+        }
+
+        readAllButton.addEventListener("click", async () => {
+            readAllButton.disabled = true;
+            try {
+                await api("/api/notifications/read-all", {method: "POST"});
+                page = 0;
+                await loadMore();
+            } catch (error) {
+                readAllButton.disabled = false;
+                setFeedback(feedbackEl, error.message, true);
+            }
+        });
+        moreButton.addEventListener("click", loadMore);
+        body.querySelector('[data-action="close"]').addEventListener("click", () => close(null));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(null);
+            }
+        });
+
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, () => close(null));
+        body.querySelector('[data-action="close"]').focus();
+        loadMore();
+    });
+}
+
+async function loadNotificationPreferences() {
+    setFeedback(notificationPreferencesFeedbackEl, "");
+    try {
+        const preferences = await api("/api/account/notification-preferences");
+        for (const box of notificationPreferencesFormEl.querySelectorAll('input[type="checkbox"]')) {
+            box.checked = preferences?.email?.[box.name] !== false;
+        }
+    } catch {
+        setFeedback(notificationPreferencesFeedbackEl, "Could not load your email choices.", true);
+    }
 }
 
 // ----- Tasks board -----
@@ -3291,6 +3512,7 @@ createNoteFormEl.addEventListener("submit", async (event) => {
 });
 
 logoutButtonEl.addEventListener("click", () => {
+    setUnreadNotifications(0);
     selectedNotes.clear();
     bulkReportEl.classList.add("hidden");
     userTimezone = "UTC";
@@ -3324,6 +3546,37 @@ navTagsButtonEl.addEventListener("click", async () => {
     showAccountView(PATH_TAGS);
     await loadTaxonomyPage();
 });
+notificationsButtonEl.addEventListener("click", async () => {
+    const destination = await openNotificationsDialog();
+    await refreshUnreadNotifications();
+    if (destination === PATH_TASKS) {
+        navTasksButtonEl.click();
+    } else if (destination === PATH_SHARED) {
+        navSharedButtonEl.click();
+    }
+});
+notificationPreferencesFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = {};
+    for (const box of notificationPreferencesFormEl.querySelectorAll('input[type="checkbox"]')) {
+        email[box.name] = box.checked;
+    }
+    const submit = notificationPreferencesFormEl.querySelector("button");
+    submit.disabled = true;
+    try {
+        await api("/api/account/notification-preferences", {method: "PATCH", body: JSON.stringify({email})});
+        setFeedback(notificationPreferencesFeedbackEl, "Email choices saved.");
+    } catch (error) {
+        setFeedback(notificationPreferencesFeedbackEl, error.message, true);
+    } finally {
+        submit.disabled = false;
+    }
+});
+setInterval(() => {
+    if (document.visibilityState === "visible" && !accountSection.classList.contains("hidden")) {
+        refreshUnreadNotifications();
+    }
+}, 60000);
 navTasksButtonEl.addEventListener("click", async () => {
     navigateTo(PATH_TASKS);
     showAccountView(PATH_TASKS);

@@ -38,6 +38,14 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\Column(length: 64, options: ['default' => 'UTC'])]
     private string $timezone = 'UTC';
 
+    /**
+     * Notification types the user does not want emails for (type => true). Null: emails for all.
+     *
+     * @var array<string, bool>|null
+     */
+    #[ORM\Column(name: 'email_opt_outs', type: 'json', nullable: true)]
+    private ?array $emailOptOuts = null;
+
     /** Raised whenever the password changes; tokens issued for an older value are rejected. */
     #[ORM\Column(name: 'token_version', type: 'integer', options: ['default' => 0])]
     private int $tokenVersion = 0;
@@ -122,6 +130,32 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     public function setTimezone(string $timezone): self
     {
         $this->timezone = $timezone;
+
+        return $this;
+    }
+
+    /**
+     * @return array<string, bool> notification type => email wanted; types not listed are wanted
+     */
+    public function getEmailOptOuts(): array
+    {
+        return $this->emailOptOuts ?? [];
+    }
+
+    public function wantsEmailFor(string $notificationType): bool
+    {
+        return !($this->emailOptOuts[$notificationType] ?? false);
+    }
+
+    public function setWantsEmailFor(string $notificationType, bool $wanted): self
+    {
+        $optOuts = $this->emailOptOuts ?? [];
+        if ($wanted) {
+            unset($optOuts[$notificationType]);
+        } else {
+            $optOuts[$notificationType] = true;
+        }
+        $this->emailOptOuts = [] === $optOuts ? null : $optOuts;
 
         return $this;
     }

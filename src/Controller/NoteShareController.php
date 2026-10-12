@@ -14,6 +14,7 @@ use App\Repository\NoteShareRepository;
 use App\Repository\UserRepository;
 use App\Security\NoteAccess;
 use App\Service\AuditLogger;
+use App\Service\Notifier;
 use App\Service\Throttle;
 use App\Util\Uuid;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
@@ -49,6 +50,7 @@ final class NoteShareController extends ApiController
         private readonly AuditLogger $audit,
         private readonly EntityManagerInterface $entityManager,
         private readonly Throttle $throttle,
+        private readonly Notifier $notifier,
     ) {
     }
 
@@ -111,6 +113,8 @@ final class NoteShareController extends ApiController
                 // A concurrent request created the same share first.
                 return $this->error('Note is already shared with this user.', Response::HTTP_CONFLICT);
             }
+
+            $this->notifier->shareGranted($target, $actor, $share->getId(), $note);
 
             return $this->json($this->shareData($share), Response::HTTP_CREATED, [
                 'Location' => sprintf('/api/notes/%s/shares/%s', $note->getId(), $share->getId()),
@@ -229,6 +233,8 @@ final class NoteShareController extends ApiController
                 $share->getUser()->getId(),
                 ['role' => $share->getRole()->value],
             );
+            $revokedId = $share->getId();
+            $revokedUser = $share->getUser();
             $this->entityManager->remove($share);
 
             try {
@@ -237,6 +243,7 @@ final class NoteShareController extends ApiController
                 // Revoked or changed by a concurrent request in the meantime.
                 return $this->staleShareError();
             }
+            $this->notifier->shareRevoked($revokedUser, $actor, $revokedId, $note);
 
             return new JsonResponse(null, Response::HTTP_NO_CONTENT);
         });

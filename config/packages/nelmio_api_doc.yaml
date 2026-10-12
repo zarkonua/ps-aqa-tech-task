@@ -208,6 +208,46 @@ nelmio_api_doc:
                         allowed_statuses: { type: array, items: { type: string }, description: 'Statuses the task may move to from here.', example: [backlog, in_progress] }
                         created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
                         updated_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                Notification:
+                    type: object
+                    required: [id, type, message, actor, resource, link, created_at, read_at]
+                    properties:
+                        id: { type: string, format: uuid, example: '8a7b6c5d-4e3f-4a2b-9c1d-0e9f8a7b6c5d' }
+                        type: { type: string, enum: [share_granted, share_revoked, task_assigned, task_due, task_completed], example: share_granted }
+                        message: { type: string, example: 'owner@example.com shared a note with you: "Release plan".' }
+                        actor:
+                            type: object
+                            nullable: true
+                            description: 'Who caused it; null for "task_due".'
+                            required: [id, email]
+                            properties:
+                                id: { type: string, format: uuid }
+                                email: { type: string, format: email, nullable: true, description: 'null when the account no longer exists.' }
+                        resource:
+                            type: object
+                            required: [type, id, title, available]
+                            properties:
+                                type: { type: string, enum: [note, task], example: note }
+                                id: { type: string, format: uuid }
+                                title: { type: string, nullable: true, description: 'null when I can no longer see the note or task, and always for "share_revoked".', example: 'Release plan' }
+                                available: { type: boolean, description: 'Whether I can still open it.', example: true }
+                        link: { type: string, nullable: true, description: 'Page of the app where it can be found; null when it is not available.', example: '/account/shared' }
+                        created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                        read_at: { type: string, format: date-time, nullable: true, example: null }
+                NotificationPreferences:
+                    type: object
+                    required: [email]
+                    properties:
+                        email:
+                            type: object
+                            description: 'Notification type → whether it is also sent by email. Default: true for all.'
+                            additionalProperties: false
+                            properties:
+                                share_granted: { type: boolean, example: true }
+                                share_revoked: { type: boolean, example: true }
+                                task_assigned: { type: boolean, example: false }
+                                task_due: { type: boolean, example: true }
+                                task_completed: { type: boolean, example: true }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]
