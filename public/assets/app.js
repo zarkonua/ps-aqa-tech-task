@@ -1,6 +1,8 @@
 const TOKEN_KEY = "qa_task_token";
 const PATH_NOTES = "/account/notes";
 const PATH_PROFILE = "/account/profile";
+const PATH_SHARED = "/account/shared";
+const ROLE_LABELS = {owner: "Owner", editor: "Editor", viewer: "Viewer"};
 
 const authSection = document.getElementById("auth-section");
 const accountSection = document.getElementById("account-section");
@@ -25,7 +27,13 @@ const createNoteFormEl = document.getElementById("create-note-form");
 const logoutButtonEl = document.getElementById("logout-button");
 const navNotesButtonEl = document.getElementById("nav-notes-button");
 const navProfileButtonEl = document.getElementById("nav-profile-button");
+const navSharedButtonEl = document.getElementById("nav-shared-button");
+const notesDashboardEl = document.getElementById("notes-dashboard");
+const createNoteSectionEl = document.getElementById("create-note-section");
+const notesListHeadingEl = document.getElementById("notes-list-heading");
 const searchNotesFormEl = document.getElementById("search-notes-form");
+
+let modalCounter = 0;
 
 const appDomReady = [
     authSection,
@@ -51,6 +59,10 @@ const appDomReady = [
     logoutButtonEl,
     navNotesButtonEl,
     navProfileButtonEl,
+    navSharedButtonEl,
+    notesDashboardEl,
+    createNoteSectionEl,
+    notesListHeadingEl,
     searchNotesFormEl,
 ].every(Boolean);
 
@@ -61,6 +73,7 @@ let totalItems = 0;
 let totalPages = 1;
 let hasNextPage = false;
 let hasPrevPage = false;
+let notesRequestId = 0;
 
 function getToken() {
     return localStorage.getItem(TOKEN_KEY);
@@ -128,20 +141,21 @@ async function api(path, options = {}) {
         const payload = await response.json().catch(() => ({}));
 
         if (response.status >= 500) {
-            throw new Error("500");
+            throw apiError("500", response.status);
         }
 
         const validationMessage = extractValidationMessage(payload);
         if (validationMessage) {
-            throw new Error(validationMessage);
+            throw apiError(validationMessage, response.status);
         }
 
-        throw new Error(
+        throw apiError(
             payload.error
             || payload.message
             || payload.detail
             || payload["hydra:description"]
             || `Request failed: ${response.status}`,
+            response.status,
         );
     }
 
@@ -151,6 +165,16 @@ async function api(path, options = {}) {
     }
 
     return response.json();
+}
+
+function apiError(message, status) {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+}
+
+function isAccessLost(error) {
+    return error?.status === 403 || error?.status === 404;
 }
 
 function extractValidationMessage(payload) {
@@ -196,10 +220,29 @@ function showAuthUI() {
     authSection.classList.remove("hidden");
 }
 
+function accountPathFor(path) {
+    return path === PATH_PROFILE || path === PATH_SHARED ? path : PATH_NOTES;
+}
+
+function isSharedView() {
+    return currentPath() === PATH_SHARED;
+}
+
+function isNotesListVisible() {
+    return !accountSection.classList.contains("hidden") && !notesView.classList.contains("hidden");
+}
+
 function setActiveNav(path) {
-    const isProfile = path === PATH_PROFILE;
-    navNotesButtonEl.classList.toggle("active-nav", !isProfile);
-    navProfileButtonEl.classList.toggle("active-nav", isProfile);
+    const buttons = [[navNotesButtonEl, PATH_NOTES], [navSharedButtonEl, PATH_SHARED], [navProfileButtonEl, PATH_PROFILE]];
+    for (const [button, buttonPath] of buttons) {
+        const isActive = accountPathFor(path) === buttonPath;
+        button.classList.toggle("active-nav", isActive);
+        if (isActive) {
+            button.setAttribute("aria-current", "page");
+        } else {
+            button.removeAttribute("aria-current");
+        }
+    }
 }
 
 function showAccountView(path) {
@@ -207,9 +250,13 @@ function showAccountView(path) {
     accountSection.classList.remove("hidden");
 
     const isProfile = path === PATH_PROFILE;
+    const isShared = path === PATH_SHARED;
     notesView.classList.toggle("hidden", isProfile);
     profileView.classList.toggle("hidden", !isProfile);
-    accountTitle.textContent = isProfile ? "Profile" : "Notes";
+    createNoteSectionEl.classList.toggle("hidden", isShared);
+    notesDashboardEl.classList.toggle("dashboard-grid--single", isShared);
+    notesListHeadingEl.textContent = isShared ? "Shared with me" : "List";
+    accountTitle.textContent = isProfile ? "Profile" : (isShared ? "Shared with me" : "Notes");
     setActiveNav(path);
 }
 
@@ -233,7 +280,9 @@ function buildModalShell(titleText) {
 
     const title = document.createElement("h3");
     title.className = "modal-title";
+    title.id = `modal-title-${++modalCounter}`;
     title.textContent = titleText;
+    dialog.setAttribute("aria-labelledby", title.id);
 
     const content = document.createElement("div");
     content.className = "modal-content";
@@ -243,6 +292,320 @@ function buildModalShell(titleText) {
     backdrop.appendChild(dialog);
 
     return {backdrop, content};
+}
+
+// Keeps keyboard focus inside the dialog, closes it on Escape and gives focus back on close.
+function activateDialog(backdrop, onDismiss) {
+    const previouslyFocused = document.activeElement;
+    const focusable = () => Array.from(
+        backdrop.querySelectorAll("button, input, select, textarea, a[href]"),
+    ).filter((element) => !element.disabled);
+
+    const onKeydown = (event) => {
+        if (backdrop !== document.body.lastElementChild) {
+            return;
+        }
+
+        if (event.key === "Escape") {
+            event.preventDefault();
+            onDismiss();
+            return;
+        }
+
+        if (event.key !== "Tab") {
+            return;
+        }
+
+        const elements = focusable();
+        if (elements.length === 0) {
+            event.preventDefault();
+            return;
+        }
+
+        const first = elements[0];
+        const last = elements[elements.length - 1];
+        if (!backdrop.contains(document.activeElement)) {
+            event.preventDefault();
+            first.focus();
+        } else if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+        }
+    };
+
+    document.addEventListener("keydown", onKeydown);
+
+    return () => {
+        document.removeEventListener("keydown", onKeydown);
+        if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
+            previouslyFocused.focus();
+        }
+    };
+}
+
+function openConfirmModal({title, message, confirmLabel}) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell(title);
+
+        const body = document.createElement("div");
+        body.className = "modal-form";
+        body.innerHTML = `
+            <p class="modal-message"></p>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="cancel">Cancel</button>
+                <button type="button" class="danger" data-action="confirm"></button>
+            </div>
+        `;
+        body.querySelector(".modal-message").textContent = message;
+        body.querySelector('[data-action="confirm"]').textContent = confirmLabel;
+
+        let deactivate = () => {};
+        const close = (result) => {
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+
+        body.querySelector('[data-action="cancel"]').addEventListener("click", () => close(false));
+        body.querySelector('[data-action="confirm"]').addEventListener("click", () => close(true));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(false);
+            }
+        });
+
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, () => close(false));
+        body.querySelector('[data-action="cancel"]').focus();
+    });
+}
+
+function openShareDialog(note) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Share note");
+        const sharesUrl = `/api/notes/${note.id}/shares`;
+
+        const body = document.createElement("div");
+        body.className = "modal-form share-dialog";
+        body.innerHTML = `
+            <p class="modal-message share-note-title"></p>
+            <form class="share-form" novalidate>
+                <label>Email of a registered user
+                    <input type="email" name="email" maxlength="190" autocomplete="off" required aria-describedby="share-feedback">
+                </label>
+                <label>Role
+                    <select name="role">
+                        <option value="viewer">Viewer (read-only)</option>
+                        <option value="editor">Editor (can edit)</option>
+                    </select>
+                </label>
+                <button type="submit">Share</button>
+            </form>
+            <p id="share-feedback" class="share-feedback" role="alert"></p>
+            <h4 class="share-heading">People with access</h4>
+            <div class="share-list" aria-live="polite"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="close">Close</button>
+            </div>
+        `;
+        body.querySelector(".share-note-title").textContent = note.title || "";
+
+        const form = body.querySelector(".share-form");
+        const emailInput = form.querySelector('input[name="email"]');
+        const roleSelect = form.querySelector('select[name="role"]');
+        const feedbackEl = body.querySelector(".share-feedback");
+        const listEl = body.querySelector(".share-list");
+
+        let closed = false;
+        let deactivate = () => {};
+        const close = () => {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            backdrop.remove();
+            deactivate();
+            resolve();
+        };
+
+        const setFeedback = (message, isError = false) => {
+            feedbackEl.textContent = message;
+            feedbackEl.classList.toggle("share-feedback--error", Boolean(message) && isError);
+            feedbackEl.classList.toggle("share-feedback--ok", Boolean(message) && !isError);
+            emailInput.setAttribute("aria-invalid", message && isError ? "true" : "false");
+        };
+
+        const setBusy = (busy) => {
+            for (const control of body.querySelectorAll("form button, form input, form select, .share-list select, .share-list button")) {
+                control.disabled = busy;
+            }
+            listEl.setAttribute("aria-busy", busy ? "true" : "false");
+        };
+
+        // The note is gone or no longer ours: nothing left to manage here.
+        const closeIfAccessLost = (error) => {
+            if (error?.status !== 403 && !(error?.status === 404 && error.message === "Note not found.")) {
+                return false;
+            }
+            close();
+            setStatus("You can no longer manage sharing for this note.", true);
+            refreshNotes().catch(() => {});
+            return true;
+        };
+
+        const renderShares = (shares) => {
+            listEl.innerHTML = "";
+            if (shares.length === 0) {
+                listEl.innerHTML = `<p class="share-empty">Not shared with anyone yet.</p>`;
+                return;
+            }
+
+            for (const share of shares) {
+                const email = share.user?.email || "";
+                const row = document.createElement("div");
+                row.className = "share-row";
+                row.innerHTML = `
+                    <span class="share-email"></span>
+                    <select>
+                        <option value="viewer">Viewer</option>
+                        <option value="editor">Editor</option>
+                    </select>
+                    <button type="button" class="danger">Revoke</button>
+                `;
+                row.querySelector(".share-email").textContent = email;
+                const select = row.querySelector("select");
+                const revokeButton = row.querySelector("button");
+                select.value = share.role;
+                select.setAttribute("aria-label", `Role for ${email}`);
+                revokeButton.setAttribute("aria-label", `Revoke access for ${email}`);
+
+                select.addEventListener("change", async () => {
+                    setBusy(true);
+                    try {
+                        await api(`${sharesUrl}/${share.id}`, {
+                            method: "PATCH",
+                            body: JSON.stringify({role: select.value, version: share.version}),
+                        });
+                        await loadShares();
+                        setFeedback(`${email} is now ${ROLE_LABELS[select.value].toLowerCase()}.`);
+                    } catch (error) {
+                        if (closeIfAccessLost(error)) {
+                            return;
+                        }
+                        await loadShares();
+                        setFeedback(error.message, true);
+                    }
+                });
+
+                revokeButton.addEventListener("click", async () => {
+                    const confirmed = await openConfirmModal({
+                        title: "Revoke access",
+                        message: `Revoke access for ${email}? They will lose access to this note immediately.`,
+                        confirmLabel: "Revoke",
+                    });
+                    if (!confirmed || closed) {
+                        return;
+                    }
+
+                    setBusy(true);
+                    try {
+                        await api(`${sharesUrl}/${share.id}`, {method: "DELETE"});
+                        await loadShares();
+                        setFeedback(`Access revoked for ${email}.`);
+                    } catch (error) {
+                        if (closeIfAccessLost(error)) {
+                            return;
+                        }
+                        await loadShares();
+                        setFeedback(error.message, true);
+                    }
+                });
+
+                listEl.appendChild(row);
+            }
+        };
+
+        async function loadShares() {
+            listEl.innerHTML = `<p class="share-empty">Loading…</p>`;
+            setBusy(true);
+            try {
+                const payload = await api(`${sharesUrl}?itemsPerPage=100`);
+                if (closed) {
+                    return;
+                }
+                renderShares(Array.isArray(payload?.items) ? payload.items : []);
+            } catch (error) {
+                if (closed || closeIfAccessLost(error)) {
+                    return;
+                }
+                listEl.innerHTML = `
+                    <p class="share-empty share-feedback--error">Could not load who has access.</p>
+                    <button type="button" class="secondary" data-action="retry">Retry</button>
+                `;
+                listEl.querySelector('[data-action="retry"]').addEventListener("click", loadShares);
+            } finally {
+                if (!closed) {
+                    setBusy(false);
+                }
+            }
+        }
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const email = emailInput.value.trim();
+            if (!email) {
+                setFeedback("Enter the email of the person to share with.", true);
+                emailInput.focus();
+                return;
+            }
+            if (!emailInput.checkValidity()) {
+                setFeedback("Enter a valid email address.", true);
+                emailInput.focus();
+                return;
+            }
+
+            setFeedback("");
+            setBusy(true);
+            try {
+                await api(sharesUrl, {
+                    method: "POST",
+                    body: JSON.stringify({email, role: roleSelect.value}),
+                });
+                form.reset();
+                await loadShares();
+                setFeedback(`Shared with ${email}.`);
+            } catch (error) {
+                if (closeIfAccessLost(error)) {
+                    return;
+                }
+                setBusy(false);
+                setFeedback(
+                    error.status === 404 ? `No registered user with the email ${email}.` : error.message,
+                    true,
+                );
+            }
+            if (!closed) {
+                emailInput.focus();
+            }
+        });
+
+        body.querySelector('[data-action="close"]').addEventListener("click", close);
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close();
+            }
+        });
+
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, close);
+        emailInput.focus();
+        loadShares();
+    });
 }
 
 function openUpdateNoteModal(note) {
@@ -349,6 +712,10 @@ function buildNotesSearchParams() {
         params.set("sort[title]", "desc");
     }
 
+    if (isSharedView()) {
+        params.set("scope", "shared");
+    }
+
     params.set("page", String(currentPage));
     params.set("itemsPerPage", pageSizeEl.value);
 
@@ -364,24 +731,52 @@ function renderNotes() {
     notesListEl.innerHTML = "";
 
     if (totalItems === 0) {
-        notesListEl.innerHTML = `<div class="panel">No notes found.</div>`;
+        const isSearching = searchQueryEl.value.trim() !== "";
+        notesListEl.innerHTML = `<div class="panel">${
+            isSharedView() && !isSearching ? "Nothing has been shared with you yet." : "No notes found."
+        }</div>`;
         return;
     }
 
     for (const note of notesCache) {
+        // The role only decides what is offered here; the server enforces it on every request.
+        const role = ROLE_LABELS[note.role] ? note.role : "owner";
+        const canEdit = role === "owner" || role === "editor";
+        const sharedBy = role === "owner"
+            ? ""
+            : `<p class="note-access"><span class="badge">${ROLE_LABELS[role]}${canEdit ? "" : " · read-only"}</span> Shared by ${escapeHtml(note.owner_email || "another user")}</p>`;
+
         const wrapper = document.createElement("article");
         wrapper.className = "panel note-item";
+        wrapper.dataset.role = role;
         wrapper.innerHTML = `
             <h3>${escapeHtml(note.title || "")}</h3>
+            ${sharedBy}
             <p>${escapeHtml(note.content || "")}</p>
-            <small>Updated: ${note.updated_at || "-"}</small>
+            <small>Updated: ${escapeHtml(note.updated_at || "-")}</small>
             <div class="note-actions">
-                <button data-action="edit">Update</button>
-                <button class="danger" data-action="delete">Delete</button>
+                ${canEdit ? `<button data-action="edit">Update</button>` : ""}
+                ${role === "owner" ? `<button class="secondary" data-action="share">Share</button>` : ""}
+                ${role === "owner" ? `<button class="danger" data-action="delete">Delete</button>` : ""}
             </div>
         `;
 
-        wrapper.querySelector('[data-action="edit"]').addEventListener("click", async () => {
+        // Access can be revoked or downgraded while the page is open: say so and show the current state.
+        const handleNoteError = async (error) => {
+            if (role !== "owner" && isAccessLost(error)) {
+                setStatus(
+                    error.status === 403
+                        ? "Your access to this note is now read-only."
+                        : "This note is no longer shared with you.",
+                    true,
+                );
+                await refreshNotes().catch(() => {});
+                return;
+            }
+            setStatus(error.message, true);
+        };
+
+        wrapper.querySelector('[data-action="edit"]')?.addEventListener("click", async () => {
             const updates = await openUpdateNoteModal(note);
             if (!updates) {
                 return;
@@ -395,11 +790,15 @@ function renderNotes() {
                 setStatus("Note updated.");
                 await refreshNotes();
             } catch (error) {
-                setStatus(error.message, true);
+                await handleNoteError(error);
             }
         });
 
-        wrapper.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+        wrapper.querySelector('[data-action="share"]')?.addEventListener("click", () => {
+            openShareDialog(note);
+        });
+
+        wrapper.querySelector('[data-action="delete"]')?.addEventListener("click", async () => {
             const confirmed = await openDeleteNoteModal(note.title || "");
             if (!confirmed) {
                 return;
@@ -410,7 +809,7 @@ function renderNotes() {
                 setStatus("Note deleted.");
                 await refreshNotes();
             } catch (error) {
-                setStatus(error.message, true);
+                await handleNoteError(error);
             }
         });
 
@@ -424,9 +823,43 @@ function setProfile(profile) {
     profileIdEl.textContent = profile?.id ?? "-";
 }
 
+function renderNotesError() {
+    notesListEl.innerHTML = `
+        <div class="panel notes-error">
+            <p>Could not load notes.</p>
+            <button type="button" class="secondary" data-action="retry">Retry</button>
+        </div>
+    `;
+    notesListEl.querySelector('[data-action="retry"]').addEventListener("click", () => {
+        refreshNotes().then(() => setStatus("")).catch((error) => setStatus(error.message, true));
+    });
+}
+
 async function refreshNotes() {
+    const requestId = ++notesRequestId;
     const params = buildNotesSearchParams();
-    const notesPayload = await api(`/api/notes?${params.toString()}`);
+    if (notesListEl.childElementCount === 0) {
+        notesListEl.innerHTML = `<div class="panel">Loading…</div>`;
+    }
+    notesListEl.setAttribute("aria-busy", "true");
+
+    let notesPayload;
+    try {
+        notesPayload = await api(`/api/notes?${params.toString()}`);
+    } catch (error) {
+        if (requestId === notesRequestId) {
+            notesListEl.setAttribute("aria-busy", "false");
+            renderNotesError();
+        }
+        throw error;
+    }
+
+    // A newer request (another page, scope or search) has been issued meanwhile.
+    if (requestId !== notesRequestId) {
+        return;
+    }
+    notesListEl.setAttribute("aria-busy", "false");
+
     hasNextPage = false;
     hasPrevPage = currentPage > 1;
 
@@ -540,7 +973,7 @@ async function renderRoute() {
 
     const token = getToken();
     const path = currentPath();
-    const accountPath = path === PATH_PROFILE ? PATH_PROFILE : PATH_NOTES;
+    const accountPath = accountPathFor(path);
 
     if (!token) {
         showAuthUI();
@@ -549,14 +982,18 @@ async function renderRoute() {
 
     try {
         await ensureAuthenticated();
-        showAccountView(accountPath);
-        if (accountPath === PATH_NOTES) {
-            await refreshNotes();
-        }
     } catch {
         clearToken();
         showAuthUI();
         setProfile(null);
+        return;
+    }
+
+    showAccountView(accountPath);
+    if (accountPath !== PATH_PROFILE) {
+        currentPage = 1;
+        notesListEl.innerHTML = "";
+        await refreshNotes().catch((error) => setStatus(error.message, true));
     }
 }
 
@@ -635,11 +1072,16 @@ logoutButtonEl.addEventListener("click", () => {
     setStatus("Logged out.");
 });
 
-navNotesButtonEl.addEventListener("click", async () => {
-    navigateTo(PATH_NOTES);
-    showAccountView(PATH_NOTES);
-    await refreshNotes();
-});
+async function openNotesList(path) {
+    navigateTo(path);
+    showAccountView(path);
+    currentPage = 1;
+    notesListEl.innerHTML = "";
+    await refreshNotes().catch((error) => setStatus(error.message, true));
+}
+
+navNotesButtonEl.addEventListener("click", () => openNotesList(PATH_NOTES));
+navSharedButtonEl.addEventListener("click", () => openNotesList(PATH_SHARED));
 
 navProfileButtonEl.addEventListener("click", async () => {
     navigateTo(PATH_PROFILE);
@@ -683,6 +1125,12 @@ nextPageEl.addEventListener("click", () => {
 });
 window.addEventListener("popstate", () => {
     renderRoute();
+});
+// Coming back to the tab: roles and shares may have changed in the meantime.
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && getToken() && isNotesListVisible() && !document.querySelector(".modal-backdrop")) {
+        refreshNotes().catch(() => {});
+    }
 });
 
 renderRoute();

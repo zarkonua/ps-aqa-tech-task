@@ -57,3 +57,24 @@ sequenceDiagram
     Frontend->>Backend: POST/PUT/DELETE /api/notes (Bearer token)
     Backend-->>Frontend: Notes CRUD response
 ```
+
+## Notes Sharing
+
+```mermaid
+sequenceDiagram
+    participant Owner
+    participant Collaborator
+    participant Frontend
+    participant Backend
+
+    Owner->>Frontend: Open share dialog
+    Frontend->>Backend: GET /api/notes/{id}/shares (Bearer token)
+    Backend-->>Frontend: Shares list
+    Owner->>Frontend: Add member / change role / revoke
+    Frontend->>Backend: POST/PATCH/DELETE /api/notes/{id}/shares (Bearer token)
+    Backend-->>Frontend: Share response (audit record written)
+
+    Collaborator->>Frontend: Open "Shared with me"
+    Frontend->>Backend: GET /api/notes?scope=shared (Bearer token)
+    Backend-->>Frontend: Shared notes with the collaborator's role
+```

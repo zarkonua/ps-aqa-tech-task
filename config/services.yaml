@@ -25,7 +25,13 @@ services:
         arguments:
             $mode: '%env(APP_MODE)%'
 
-    App\ApiPlatform\NoteOwnerExtension:
+    App\ApiPlatform\NoteAccessExtension:
         tags:
             - { name: 'api_platform.doctrine.orm.query_extension.collection' }
             - { name: 'api_platform.doctrine.orm.query_extension.item' }
+
+    # Must run before BrokenModeNoteNormalizer so the role is set in every app mode.
+    App\Serializer\NoteRoleNormalizer:
+        autoconfigure: false
+        tags:
+            - { name: 'serializer.normalizer', priority: 10 }

@@ -28,6 +28,7 @@ Key features:
 - Notes creation form: create a new note.
 - Notes editing form: update an existing note.
 - Notes deletion confirmation: confirm and remove a note.
+- Notes sharing: share a note with other users as viewer or editor, and see notes shared with you. See [Notes Sharing and RBAC](docs/notes-sharing-rbac.md).
 
 ## Tech Stack
 
@@ -62,5 +63,16 @@ Recommended order for first check:
 
 This diagram can help you understand the main entities and interactions before test design:
 - [Service Diagram](docs/service-diagram.md)
+
+## Sharing fixtures
+
+Seed four personas (owner, viewer, editor, unrelated) with two private and two shared notes, isolated by a run ID:
+
+```sh
+docker compose run --rm php-cli php bin/console app:fixtures:sharing:seed my-run
+docker compose run --rm php-cli php bin/console app:fixtures:sharing:purge my-run
+```
+
+Details: [Notes Sharing and RBAC](docs/notes-sharing-rbac.md#fixtures).
 
 ## Good luck!

@@ -46,14 +46,15 @@
                 <h2 id="account-title">Account</h2>
                 <div class="account-actions">
                     <button id="nav-notes-button" class="secondary" type="button">Notes</button>
+                    <button id="nav-shared-button" class="secondary" type="button">Shared with me</button>
                     <button id="nav-profile-button" class="secondary" type="button">Profile</button>
                     <button id="logout-button" class="danger" type="button">Log Out</button>
                 </div>
             </div>
 
             <div id="notes-view">
-                <div class="dashboard-grid">
-                    <section class="panel section-card">
+                <div id="notes-dashboard" class="dashboard-grid">
+                    <section id="create-note-section" class="panel section-card">
                         <h2>Create</h2>
                         <form id="create-note-form">
                             <label>Title <input type="text" id="note-title" required></label>
@@ -63,7 +64,7 @@
                     </section>
 
                     <section class="panel section-card">
-                        <h2>List</h2>
+                        <h2 id="notes-list-heading">List</h2>
                         <form id="search-notes-form" class="list-controls">
                             <label>Query <input type="text" id="notes-search-query" placeholder="Search notes"></label>
                             <label>Field
@@ -99,7 +100,7 @@
                             </div>
                         </div>
 
-                        <div id="notes-list" class="notes-list"></div>
+                        <div id="notes-list" class="notes-list" aria-live="polite"></div>
                     </section>
                 </div>
             </div>

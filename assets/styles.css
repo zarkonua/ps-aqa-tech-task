@@ -351,6 +351,90 @@ button:disabled {
     gap: 8px;
 }
 
+.dashboard-grid--single {
+    grid-template-columns: 1fr;
+}
+
+.note-access {
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.badge {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 2px 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel-alt);
+    color: #5b4635;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.notes-error {
+    display: grid;
+    gap: 10px;
+    justify-items: start;
+}
+
+.share-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 190px auto;
+    gap: 10px;
+    align-items: end;
+}
+
+.share-feedback {
+    min-height: 20px;
+    font-size: 14px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.share-feedback--ok {
+    color: #6c4e33;
+}
+
+.share-feedback--error {
+    color: #8b3f37;
+}
+
+.share-heading {
+    margin: 0;
+    font-size: 15px;
+}
+
+.share-list {
+    display: grid;
+    gap: 8px;
+}
+
+.share-empty {
+    color: var(--muted);
+    font-size: 14px;
+}
+
+.share-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 130px auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.share-email {
+    overflow-wrap: anywhere;
+    font-weight: 600;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid var(--accent-strong);
+    outline-offset: 2px;
+}
+
 @media (max-width: 1020px) {
     .auth-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -376,6 +460,11 @@ button:disabled {
     }
 
     .list-controls {
+        grid-template-columns: 1fr;
+    }
+
+    .share-form,
+    .share-row {
         grid-template-columns: 1fr;
     }
 }

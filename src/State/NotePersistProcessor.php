@@ -32,6 +32,13 @@ final class NotePersistProcessor implements ProcessorInterface
             throw new AccessDeniedHttpException('Authenticated user is required.');
         }
 
+        // On update the payload is a fresh object whose properties are copied over the stored note,
+        // so the owner must be carried over explicitly: an editor saving a note must not become its owner.
+        $previous = $context['previous_data'] ?? null;
+        if ($previous instanceof Note && null !== $previous->getOwner()) {
+            $data->setOwner($previous->getOwner());
+        }
+
         if (null === $data->getOwner()) {
             $data->setOwner($user);
         }

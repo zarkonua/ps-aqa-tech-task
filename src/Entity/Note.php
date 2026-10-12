@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Entity;
 
+use ApiPlatform\Metadata\ApiProperty;
 use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
@@ -15,8 +16,10 @@ use ApiPlatform\Doctrine\Orm\Filter\FreeTextQueryFilter;
 use ApiPlatform\Doctrine\Orm\Filter\OrFilter;
 use ApiPlatform\Doctrine\Orm\Filter\PartialSearchFilter;
 use ApiPlatform\Doctrine\Orm\Filter\SortFilter;
+use App\ApiPlatform\NoteAccessExtension;
 use App\Repository\NoteRepository;
 use App\State\NotePersistProcessor;
+use App\State\NoteRemoveProcessor;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Serializer\Attribute\Groups;
 use Symfony\Component\Serializer\Attribute\SerializedName;
@@ -38,12 +41,27 @@ use Symfony\Component\Validator\Constraints as Assert;
                 'content' => new QueryParameter(filter: new PartialSearchFilter(), property: 'content'),
                 'sort[updatedAt]' => new QueryParameter(filter: new SortFilter(), property: 'updatedAt'),
                 'sort[title]' => new QueryParameter(filter: new SortFilter(), property: 'title'),
+                'scope' => new QueryParameter(
+                    schema: ['type' => 'string', 'enum' => NoteAccessExtension::SCOPES, 'default' => NoteAccessExtension::SCOPE_OWNED],
+                    description: 'Which notes to list: "owned" (default), "shared" (shared with me) or "all".',
+                    constraints: [new Assert\Choice(choices: NoteAccessExtension::SCOPES, message: 'Scope must be one of: owned, shared, all.')],
+                ),
             ],
         ),
         new Post(uriTemplate: '/api/notes', security: "is_granted('ROLE_USER')", processor: NotePersistProcessor::class),
         new Get(uriTemplate: '/api/notes/{id}', security: "is_granted('ROLE_USER')"),
-        new Put(uriTemplate: '/api/notes/{id}', security: "is_granted('ROLE_USER')", processor: NotePersistProcessor::class),
-        new Delete(uriTemplate: '/api/notes/{id}', security: "is_granted('ROLE_USER')"),
+        new Put(
+            uriTemplate: '/api/notes/{id}',
+            security: "is_granted('NOTE_EDIT', object)",
+            securityMessage: 'Your role does not allow editing this note.',
+            processor: NotePersistProcessor::class,
+        ),
+        new Delete(
+            uriTemplate: '/api/notes/{id}',
+            security: "is_granted('NOTE_DELETE', object)",
+            securityMessage: 'Only the note owner can delete this note.',
+            processor: NoteRemoveProcessor::class,
+        ),
     ],
     normalizationContext: ['groups' => ['note:read']],
     denormalizationContext: ['groups' => ['note:write']],
@@ -94,6 +112,14 @@ class Note
     #[SerializedName('updated_at')]
     private \DateTimeImmutable $updatedAt;
 
+    /** The current user's role on this note; not persisted, set when the note is serialized. */
+    #[Groups(['note:read'])]
+    #[ApiProperty(
+        description: 'Role of the authenticated user on this note.',
+        schema: ['type' => 'string', 'enum' => ['owner', 'editor', 'viewer'], 'readOnly' => true],
+    )]
+    private ?string $role = null;
+
     public function __construct()
     {
         $now = new \DateTimeImmutable();
@@ -132,6 +158,32 @@ class Note
     public function setOwner(User $owner): self
     {
         $this->owner = $owner;
+
+        return $this;
+    }
+
+    #[Groups(['note:read'])]
+    #[SerializedName('owner_id')]
+    public function getOwnerId(): ?string
+    {
+        return $this->owner?->getId();
+    }
+
+    #[Groups(['note:read'])]
+    #[SerializedName('owner_email')]
+    public function getOwnerEmail(): ?string
+    {
+        return $this->owner?->getEmail();
+    }
+
+    public function getRole(): ?string
+    {
+        return $this->role;
+    }
+
+    public function setRole(?string $role): self
+    {
+        $this->role = $role;
 
         return $this;
     }

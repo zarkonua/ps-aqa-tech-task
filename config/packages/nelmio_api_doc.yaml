@@ -4,6 +4,58 @@ nelmio_api_doc:
             title: My App
             description: This is an awesome app!
             version: 1.0.0
+        components:
+            schemas:
+                ApiError:
+                    type: object
+                    required: [error]
+                    properties:
+                        error: { type: string, example: 'Note not found.' }
+                JwtError:
+                    type: object
+                    required: [code, message]
+                    properties:
+                        code: { type: integer, example: 401 }
+                        message: { type: string, example: 'Expired JWT Token' }
+                ValidationError:
+                    type: object
+                    required: [error, violations]
+                    properties:
+                        error: { type: string, example: 'Validation failed.' }
+                        violations:
+                            type: array
+                            items:
+                                type: object
+                                required: [propertyPath, message]
+                                properties:
+                                    propertyPath: { type: string, example: role }
+                                    message: { type: string, example: 'Role must be one of: viewer, editor.' }
+                NoteShare:
+                    type: object
+                    required: [id, note_id, user, role, version, created_at, updated_at]
+                    properties:
+                        id: { type: string, format: uuid, example: '0b0f6f0e-3c5e-4e63-9f0a-6f2f0d0c1a11' }
+                        note_id: { type: string, format: uuid, example: '5f1d7a52-6b53-4d0c-8f0e-2d6b3a9c7e10' }
+                        user:
+                            type: object
+                            required: [id, email]
+                            properties:
+                                id: { type: string, format: uuid, example: 'f0f04231-8b66-4e5f-9d55-2eead364ea02' }
+                                email: { type: string, format: email, example: 'viewer@example.com' }
+                        role: { type: string, enum: [viewer, editor], example: viewer }
+                        version: { type: integer, minimum: 1, description: 'Incremented on every change; send it back on PATCH to detect concurrent updates.', example: 1 }
+                        created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                        updated_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                NoteShareList:
+                    type: object
+                    required: [items, total, page, items_per_page]
+                    properties:
+                        items:
+                            type: array
+                            items: { $ref: '#/components/schemas/NoteShare' }
+                        total: { type: integer, example: 1 }
+                        page: { type: integer, example: 1 }
+                        items_per_page: { type: integer, example: 50 }
     areas: # to filter documented areas
         path_patterns:
             - ^/api(?!/doc$) # Accepts routes under /api except /api/doc
