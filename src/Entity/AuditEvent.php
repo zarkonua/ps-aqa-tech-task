@@ -26,6 +26,11 @@ class AuditEvent
     public const NOTE_RESTORED = 'note.restored';
     public const ATTACHMENT_UPLOADED = 'attachment.uploaded';
     public const ATTACHMENT_DELETED = 'attachment.deleted';
+    public const TASK_CREATED = 'task.created';
+    public const TASK_UPDATED = 'task.updated';
+    public const TASK_TRANSITIONED = 'task.transitioned';
+    public const TASK_REORDERED = 'task.reordered';
+    public const TASK_DELETED = 'task.deleted';
     public const TAG_CREATED = 'tag.created';
     public const TAG_UPDATED = 'tag.updated';
     public const TAG_DELETED = 'tag.deleted';

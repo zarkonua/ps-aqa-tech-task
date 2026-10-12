@@ -12,8 +12,11 @@ use App\Entity\NoteAttachment;
 use App\Entity\NoteRevision;
 use App\Entity\NoteShare;
 use App\Entity\Tag;
+use App\Entity\Task;
 use App\Entity\User;
 use App\Enum\ShareRole;
+use App\Enum\TaskPriority;
+use App\Enum\TaskStatus;
 use App\Repository\NoteAttachmentRepository;
 use App\Util\Uuid;
 use Doctrine\ORM\EntityManagerInterface;
@@ -26,7 +29,8 @@ use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
  */
 final class SharingFixtures
 {
-    public const VERSION = 7;
+    public const VERSION = 8;
+    public const TASKS = 20;
     public const SEARCH_NOTES = 60;
     public const BULK_NOTES = 105;
     public const DEFAULT_PASSWORD = 'Fixture-Passw0rd!';
@@ -108,7 +112,7 @@ final class SharingFixtures
     {
         $this->purge($runId);
 
-        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => []];
+        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => [], 'tasks' => []];
 
         $users = [];
         foreach (self::PERSONAS as $persona) {
@@ -208,6 +212,47 @@ final class SharingFixtures
             }
             $timestamps[$definition['id']] = [$definition['created_at'], $definition['updated_at']];
             $manifest['search_notes'][$key] = $definition;
+        }
+
+        // Twenty tasks, five in each status: sixteen of the owner (some assigned to the editor or the viewer,
+        // some linked to "shared_1", which all three can see) and four of the editor (two assigned to the owner).
+        $positions = [];
+        $sharedNote = $this->entityManager->getReference(Note::class, $manifest['notes']['shared_1']['id']);
+        for ($i = 1; $i <= self::TASKS; ++$i) {
+            $key = sprintf('task_%02d', $i);
+            $ownerPersona = 0 === $i % 5 ? 'editor' : 'owner';
+            $assigneePersona = match (true) {
+                'editor' === $ownerPersona => 0 === $i % 10 ? 'owner' : null,
+                0 === $i % 3 => 'editor',
+                0 === $i % 7 => 'viewer',
+                default => null,
+            };
+            $status = TaskStatus::cases()[$i % 4];
+            $linked = 1 === $i % 4;
+            $dueAt = 0 === $i % 6 ? null : (new \DateTimeImmutable('2026-11-01T09:00:00+00:00'))->modify(sprintf('+%d days', $i));
+
+            $task = (new Task($users[$ownerPersona], sprintf('[%s] Task %02d', $runId, $i), self::id($runId, 'task', $key)))
+                ->setDescription(sprintf('Fixture task %02d.', $i))
+                ->setStatus($status)
+                ->setPriority(TaskPriority::cases()[$i % 3])
+                ->setDueAt($dueAt)
+                ->setAssignee(null === $assigneePersona ? null : $users[$assigneePersona])
+                ->setNote($linked ? $sharedNote : null)
+                ->setPosition($positions[$ownerPersona][$status->value] ?? 0);
+            $positions[$ownerPersona][$status->value] = $task->getPosition() + 1;
+            $this->entityManager->persist($task);
+
+            $manifest['tasks'][$key] = [
+                'id' => $task->getId(),
+                'title' => $task->getTitle(),
+                'status' => $status->value,
+                'priority' => $task->getPriority()->value,
+                'position' => $task->getPosition(),
+                'owner' => $ownerPersona,
+                'assignee' => $assigneePersona,
+                'note' => $linked ? 'shared_1' : null,
+                'due_at' => $dueAt?->format(\DATE_ATOM),
+            ];
         }
 
         // Plain notes of the owner, a few more than one bulk request accepts. All share one timestamp.

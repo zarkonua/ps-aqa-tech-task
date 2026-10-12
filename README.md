@@ -35,6 +35,7 @@ Key features:
 - Bulk operations: set category, add or remove tags, or delete up to 100 notes at once, with per-note results. See [Bulk Operations](docs/bulk-operations.md).
 - File attachments: up to five PNG, JPG, PDF, TXT or CSV files per note. See [File Attachments](docs/file-attachments.md).
 - Version history: every real save of a note is a revision that can be compared and restored; stale saves are refused. See [Notes Version History](docs/notes-version-history.md).
+- Tasks: a kanban board of tasks with priorities, due times, assignees and optional links to notes. See [Tasks and Kanban](docs/tasks-kanban.md).
 
 ## Tech Stack
 

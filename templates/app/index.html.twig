@@ -75,6 +75,7 @@
                     <button id="nav-notes-button" class="secondary" type="button">Notes</button>
                     <button id="nav-shared-button" class="secondary" type="button">Shared with me</button>
                     <button id="nav-tags-button" class="secondary" type="button">Tags</button>
+                    <button id="nav-tasks-button" class="secondary" type="button">Tasks</button>
                     <button id="nav-profile-button" class="secondary" type="button">Profile</button>
                     <button id="logout-button" class="danger" type="button">Log Out</button>
                 </div>
@@ -164,6 +165,52 @@
                         <div id="notes-list" class="notes-list" aria-live="polite"></div>
                     </section>
                 </div>
+            </div>
+
+            <div id="tasks-view" class="hidden">
+                <section class="panel section-card">
+                    <div class="tasks-toolbar">
+                        <button id="task-new-button" type="button">New task</button>
+                        <label>Status
+                            <select id="task-filter-status">
+                                <option value="">All statuses</option>
+                                <option value="backlog">Backlog</option>
+                                <option value="todo">To do</option>
+                                <option value="in_progress">In progress</option>
+                                <option value="done">Done</option>
+                            </select>
+                        </label>
+                        <label>Priority
+                            <select id="task-filter-priority">
+                                <option value="">All priorities</option>
+                                <option value="high">High</option>
+                                <option value="medium">Medium</option>
+                                <option value="low">Low</option>
+                            </select>
+                        </label>
+                        <label>Assignee
+                            <select id="task-filter-assignee">
+                                <option value="">Anyone</option>
+                                <option value="me">Assigned to me</option>
+                                <option value="none">Unassigned</option>
+                            </select>
+                        </label>
+                    </div>
+                    <p id="tasks-feedback" class="share-feedback" role="alert"></p>
+                    <div id="tasks-board" class="kanban" aria-live="polite">
+                        {% for column in [
+                            {status: 'backlog', title: 'Backlog'},
+                            {status: 'todo', title: 'To do'},
+                            {status: 'in_progress', title: 'In progress'},
+                            {status: 'done', title: 'Done'},
+                        ] %}
+                            <section class="kanban-column" data-status="{{ column.status }}" aria-labelledby="kanban-{{ column.status }}">
+                                <h3 id="kanban-{{ column.status }}">{{ column.title }} <span class="kanban-count" data-role="count">0</span></h3>
+                                <ul class="kanban-list" data-role="list" aria-label="{{ column.title }} tasks"></ul>
+                            </section>
+                        {% endfor %}
+                    </div>
+                </section>
             </div>
 
             <div id="taxonomy-view" class="hidden">

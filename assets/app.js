@@ -3,6 +3,7 @@ const PATH_NOTES = "/account/notes";
 const PATH_PROFILE = "/account/profile";
 const PATH_SHARED = "/account/shared";
 const PATH_TAGS = "/account/tags";
+const PATH_TASKS = "/account/tasks";
 const MAX_TAGS_PER_NOTE = 10;
 const ROLE_LABELS = {owner: "Owner", editor: "Editor", viewer: "Viewer"};
 
@@ -32,6 +33,10 @@ const navProfileButtonEl = document.getElementById("nav-profile-button");
 const navSharedButtonEl = document.getElementById("nav-shared-button");
 const navTagsButtonEl = document.getElementById("nav-tags-button");
 const taxonomyView = document.getElementById("taxonomy-view");
+const navTasksButtonEl = document.getElementById("nav-tasks-button");
+const tasksView = document.getElementById("tasks-view");
+const tasksBoardEl = document.getElementById("tasks-board");
+const tasksFeedbackEl = document.getElementById("tasks-feedback");
 const tagFilterEl = document.getElementById("notes-tag-filter");
 const tagFilterLabelEl = document.getElementById("notes-tag-filter-label");
 const updatedFromEl = document.getElementById("notes-updated-from");
@@ -94,6 +99,10 @@ const appDomReady = [
     navSharedButtonEl,
     navTagsButtonEl,
     taxonomyView,
+    navTasksButtonEl,
+    tasksView,
+    tasksBoardEl,
+    tasksFeedbackEl,
     tagFilterEl,
     tagFilterLabelEl,
     updatedFromEl,
@@ -303,7 +312,7 @@ function showAuthUI() {
 }
 
 function accountPathFor(path) {
-    return [PATH_PROFILE, PATH_SHARED, PATH_TAGS].includes(path) ? path : PATH_NOTES;
+    return [PATH_PROFILE, PATH_SHARED, PATH_TAGS, PATH_TASKS].includes(path) ? path : PATH_NOTES;
 }
 
 function isSharedView() {
@@ -319,6 +328,7 @@ function setActiveNav(path) {
         [navNotesButtonEl, PATH_NOTES],
         [navSharedButtonEl, PATH_SHARED],
         [navTagsButtonEl, PATH_TAGS],
+        [navTasksButtonEl, PATH_TASKS],
         [navProfileButtonEl, PATH_PROFILE],
     ];
     for (const [button, buttonPath] of buttons) {
@@ -339,7 +349,9 @@ function showAccountView(path) {
     const isProfile = path === PATH_PROFILE;
     const isShared = path === PATH_SHARED;
     const isTags = path === PATH_TAGS;
-    notesView.classList.toggle("hidden", isProfile || isTags);
+    const isTasks = path === PATH_TASKS;
+    tasksView.classList.toggle("hidden", !isTasks);
+    notesView.classList.toggle("hidden", isProfile || isTags || isTasks);
     profileView.classList.toggle("hidden", !isProfile);
     taxonomyView.classList.toggle("hidden", !isTags);
     createNoteSectionEl.classList.toggle("hidden", isShared);
@@ -347,7 +359,7 @@ function showAccountView(path) {
     tagFilterLabelEl.classList.toggle("hidden", isShared);
     notesDashboardEl.classList.toggle("dashboard-grid--single", isShared);
     notesListHeadingEl.textContent = isShared ? "Shared with me" : "List";
-    accountTitle.textContent = {[PATH_PROFILE]: "Profile", [PATH_SHARED]: "Shared with me", [PATH_TAGS]: "Tags and categories"}[path] || "Notes";
+    accountTitle.textContent = {[PATH_PROFILE]: "Profile", [PATH_SHARED]: "Shared with me", [PATH_TAGS]: "Tags and categories", [PATH_TASKS]: "Tasks"}[path] || "Notes";
     setActiveNav(path);
 }
 
@@ -2015,6 +2027,471 @@ function openHistoryDialog(note, canEdit) {
     });
 }
 
+// ----- Tasks board -----
+
+const TASK_STATUSES = ["backlog", "todo", "in_progress", "done"];
+const TASK_STATUS_LABELS = {backlog: "Backlog", todo: "To do", in_progress: "In progress", done: "Done"};
+const taskFilterEls = {
+    status: document.getElementById("task-filter-status"),
+    priority: document.getElementById("task-filter-priority"),
+    assignee: document.getElementById("task-filter-assignee"),
+};
+let allTasks = [];
+let draggedTaskId = "";
+
+// Offset of a time zone from UTC at a given moment, in milliseconds.
+function zoneOffset(date, timeZone) {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+        timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(date).map((part) => [part.type, part.value]));
+    return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - Math.floor(date.getTime() / 1000) * 1000;
+}
+
+// "2026-10-20T15:00" as wall-clock time in the account's time zone -> ISO time in UTC.
+function zonedInputToUtc(value, timeZone) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+    if (!match) {
+        return null;
+    }
+    const wallClock = Date.UTC(match[1], match[2] - 1, match[3], match[4], match[5]);
+    let utc = wallClock - zoneOffset(new Date(wallClock), timeZone);
+    // The offset at the result can differ from the first guess around a clock change.
+    utc = wallClock - zoneOffset(new Date(utc), timeZone);
+    return new Date(utc).toISOString().replace(".000Z", "Z");
+}
+
+function utcToZonedInput(iso, timeZone) {
+    const date = iso ? new Date(iso) : null;
+    if (!date || Number.isNaN(date.getTime())) {
+        return "";
+    }
+    return new Date(date.getTime() + zoneOffset(date, timeZone)).toISOString().slice(0, 16);
+}
+
+async function loadTasks() {
+    setFeedback(tasksFeedbackEl, "");
+    tasksBoardEl.setAttribute("aria-busy", "true");
+    try {
+        const tasks = [];
+        for (let page = 1; page <= 50; page += 1) {
+            const payload = await api(`/api/tasks?limit=100&page=${page}`);
+            tasks.push(...(Array.isArray(payload?.items) ? payload.items : []));
+            if (tasks.length >= (payload?.total ?? 0) || !payload?.items?.length) {
+                break;
+            }
+        }
+        allTasks = tasks;
+        renderTasks();
+    } catch (error) {
+        if (error.status === 401) {
+            return;
+        }
+        tasksFeedbackEl.textContent = "";
+        setFeedback(tasksFeedbackEl, "Could not load the tasks. ", true);
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "secondary";
+        retry.textContent = "Retry";
+        retry.addEventListener("click", loadTasks);
+        tasksFeedbackEl.appendChild(retry);
+    } finally {
+        tasksBoardEl.setAttribute("aria-busy", "false");
+    }
+}
+
+function taskMatchesFilters(task) {
+    const {status, priority, assignee} = taskFilterEls;
+    if (status.value && task.status !== status.value) {
+        return false;
+    }
+    if (priority.value && task.priority !== priority.value) {
+        return false;
+    }
+    if (assignee.value === "me") {
+        return task.assignee?.id === accountProfile?.id;
+    }
+    return assignee.value !== "none" || !task.assignee;
+}
+
+function renderTasks() {
+    for (const column of tasksBoardEl.querySelectorAll(".kanban-column")) {
+        const status = column.dataset.status;
+        const listEl = column.querySelector('[data-role="list"]');
+        const tasks = allTasks.filter((task) => task.status === status && taskMatchesFilters(task));
+        column.querySelector('[data-role="count"]').textContent = String(tasks.length);
+        column.classList.toggle("hidden", Boolean(taskFilterEls.status.value) && taskFilterEls.status.value !== status);
+        listEl.innerHTML = "";
+        if (tasks.length === 0) {
+            const empty = document.createElement("li");
+            empty.className = "share-empty kanban-empty";
+            empty.textContent = allTasks.some((task) => task.status === status) ? "No tasks match the filters." : "No tasks.";
+            listEl.appendChild(empty);
+        }
+        for (const task of tasks) {
+            listEl.appendChild(buildTaskCard(task));
+        }
+    }
+}
+
+function buildTaskCard(task) {
+    const isOwner = task.role === "owner";
+    const statusIndex = TASK_STATUSES.indexOf(task.status);
+    const card = document.createElement("li");
+    card.className = `kanban-card kanban-card--${task.priority}`;
+    card.dataset.id = task.id;
+    card.draggable = true;
+    card.tabIndex = 0;
+
+    const overdue = task.due_at && task.status !== "done" && new Date(task.due_at) < new Date();
+    card.innerHTML = `
+        <strong class="kanban-title"></strong>
+        <p class="kanban-meta"><span class="badge">${escapeHtml(task.priority)}</span><span data-role="due"></span></p>
+        <p class="kanban-meta" data-role="people"></p>
+        <p class="kanban-meta" data-role="note"></p>
+        <div class="kanban-actions"></div>
+    `;
+    card.querySelector(".kanban-title").textContent = task.title;
+    const dueEl = card.querySelector('[data-role="due"]');
+    dueEl.textContent = task.due_at ? `Due ${formatTimestamp(task.due_at)}${overdue ? " — overdue" : ""}` : "No due time";
+    dueEl.classList.toggle("share-feedback--error", Boolean(overdue));
+    card.querySelector('[data-role="people"]').textContent = [
+        task.assignee ? `Assigned to ${task.assignee.id === accountProfile?.id ? "me" : task.assignee.email}` : "Unassigned",
+        isOwner ? "" : `from ${task.owner.email}`,
+    ].filter(Boolean).join(", ");
+    card.querySelector('[data-role="note"]').textContent = task.note ? `Note: ${task.note.title}` : "";
+
+    const actions = card.querySelector(".kanban-actions");
+    const addButton = (label, ariaLabel, handler, className = "secondary") => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = className;
+        button.textContent = label;
+        button.setAttribute("aria-label", ariaLabel);
+        button.addEventListener("click", handler);
+        actions.appendChild(button);
+    };
+    // Every drag-and-drop move has a button, so the board works from the keyboard.
+    for (const [offset, arrow] of [[-1, "←"], [1, "→"]]) {
+        const target = TASK_STATUSES[statusIndex + offset];
+        if (target && task.allowed_statuses.includes(target)) {
+            addButton(arrow, `Move "${task.title}" to ${TASK_STATUS_LABELS[target]}`, () => moveTask(task, target));
+        }
+    }
+    if (isOwner) {
+        addButton("↑", `Move "${task.title}" up`, () => shiftTask(task, -1));
+        addButton("↓", `Move "${task.title}" down`, () => shiftTask(task, 1));
+        addButton("Edit", `Edit "${task.title}"`, () => editTask(task));
+        addButton("Delete", `Delete "${task.title}"`, () => deleteTask(task), "danger");
+    }
+
+    card.addEventListener("dragstart", (event) => {
+        draggedTaskId = task.id;
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", task.id);
+        card.classList.add("kanban-card--dragging");
+    });
+    card.addEventListener("dragend", () => {
+        card.classList.remove("kanban-card--dragging");
+        for (const column of tasksBoardEl.querySelectorAll(".kanban-column--over")) {
+            column.classList.remove("kanban-column--over");
+        }
+    });
+
+    return card;
+}
+
+// After any refused or failed change the board is reloaded, so it always shows what the server has.
+async function taskAction(action, successMessage) {
+    try {
+        await action();
+        await loadTasks();
+        setFeedback(tasksFeedbackEl, successMessage);
+    } catch (error) {
+        if (error.status === 401) {
+            return;
+        }
+        await loadTasks();
+        setFeedback(tasksFeedbackEl, error.status === 404 ? "This task is no longer available to you." : error.message, true);
+    }
+}
+
+function moveTask(task, status) {
+    return taskAction(
+        () => api(`/api/tasks/${task.id}/transition`, {method: "POST", body: JSON.stringify({status, version: task.version})}),
+        `"${task.title}" moved to ${TASK_STATUS_LABELS[status]}.`,
+    );
+}
+
+// Puts a task at an index among the tasks shown in its column and sends the whole column order.
+function reorderTask(task, visibleIndex) {
+    const column = allTasks.filter((other) => other.status === task.status && other.role === "owner");
+    const shown = column.filter((other) => other.id !== task.id && taskMatchesFilters(other));
+    const before = shown[visibleIndex];
+    const order = column.filter((other) => other.id !== task.id);
+    order.splice(before ? order.indexOf(before) : order.length, 0, task);
+    if (order.every((other, index) => other.id === column[index].id)) {
+        return Promise.resolve();
+    }
+
+    return taskAction(
+        () => api("/api/tasks/reorder", {method: "PATCH", body: JSON.stringify({status: task.status, ordered_ids: order.map((other) => other.id)})}),
+        `"${task.title}" moved.`,
+    );
+}
+
+function shiftTask(task, direction) {
+    const shown = allTasks.filter((other) => other.status === task.status && other.role === "owner" && taskMatchesFilters(other));
+    const index = shown.findIndex((other) => other.id === task.id);
+    const target = index + direction;
+    if (target < 0 || target >= shown.length) {
+        return Promise.resolve();
+    }
+    return reorderTask(task, target);
+}
+
+async function deleteTask(task) {
+    const confirmed = await openConfirmModal({
+        title: "Delete task",
+        message: `Delete task "${task.title}"? This cannot be undone.`,
+        confirmLabel: "Delete",
+    });
+    if (confirmed) {
+        await taskAction(() => api(`/api/tasks/${task.id}`, {method: "DELETE"}), `"${task.title}" deleted.`);
+    }
+}
+
+async function editTask(task) {
+    const saved = await openTaskEditor(task);
+    if (saved) {
+        await loadTasks();
+        setFeedback(tasksFeedbackEl, task ? `"${saved.title}" saved.` : `"${saved.title}" added to the backlog.`);
+    }
+}
+
+function openTaskEditor(task) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell(task ? "Edit task" : "New task");
+
+        const form = document.createElement("form");
+        form.className = "modal-form";
+        form.noValidate = true;
+        form.innerHTML = `
+            <label>Title <input type="text" name="title" maxlength="150" required></label>
+            <label>Description <textarea name="description" rows="4" maxlength="5000"></textarea></label>
+            <div class="task-editor-row">
+                <label>Priority
+                    <select name="priority">
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </label>
+                <label>Due (<span data-role="zone"></span>)
+                    <input type="datetime-local" name="due">
+                </label>
+            </div>
+            <div class="task-editor-row">
+                <label>Find a note to link
+                    <input type="search" name="note-search" placeholder="Part of the title or text" autocomplete="off">
+                </label>
+                <label>Linked note
+                    <select name="note"><option value="">No note</option></select>
+                </label>
+            </div>
+            <label>Assignee
+                <select name="assignee"><option value="">Unassigned</option></select>
+            </label>
+            <p class="share-feedback share-feedback--error" role="alert"></p>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="cancel">Cancel</button>
+                <button type="submit">Save</button>
+            </div>
+        `;
+        const field = (name) => form.elements.namedItem(name);
+        const feedback = form.querySelector(".share-feedback");
+        const submit = form.querySelector('button[type="submit"]');
+        form.querySelector('[data-role="zone"]').textContent = userTimezone;
+        field("title").value = task?.title ?? "";
+        field("description").value = task?.description ?? "";
+        field("priority").value = task?.priority ?? "medium";
+        field("due").value = utcToZonedInput(task?.due_at, userTimezone);
+
+        let closed = false;
+        let deactivate = () => {};
+        const close = (result) => {
+            closed = true;
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+
+        // Only people who can see the linked note can be assigned.
+        async function loadAssignees(selected) {
+            const select = field("assignee");
+            const noteId = field("note").value;
+            try {
+                const payload = await api(`/api/tasks/assignees${noteId ? `?noteId=${noteId}` : ""}`);
+                select.innerHTML = `<option value="">Unassigned</option>`;
+                for (const person of Array.isArray(payload?.items) ? payload.items : []) {
+                    const option = document.createElement("option");
+                    option.value = person.id;
+                    option.textContent = person.id === accountProfile?.id ? `${person.email} (me)` : person.email;
+                    select.appendChild(option);
+                }
+                select.value = selected;
+                if (select.value !== selected) {
+                    select.value = "";
+                    feedback.textContent = "The previous assignee cannot see this note, so the task is unassigned unless you pick someone else.";
+                }
+            } catch (error) {
+                feedback.textContent = "Could not load who can be assigned.";
+            }
+        }
+
+        // The note list can be long: the select offers the latest matches of the search box,
+        // and always keeps the note that is linked or picked.
+        let noteSearchId = 0;
+        async function loadNotes(query = "") {
+            const select = field("note");
+            const searchId = ++noteSearchId;
+            const chosen = select.dataset.loaded ? select.value : (task?.note?.id ?? "");
+            const chosenTitle = select.selectedOptions[0]?.textContent || task?.note?.title || "";
+            let notes = [];
+            try {
+                const params = new URLSearchParams({scope: "all", limit: "20"});
+                if (query) {
+                    params.set("q", query);
+                }
+                notes = await api(`/api/notes?${params.toString()}`);
+            } catch {
+                // The task can still be saved without changing the link.
+            }
+            if (closed || searchId !== noteSearchId) {
+                return;
+            }
+
+            select.innerHTML = `<option value="">No note</option>`;
+            const options = Array.isArray(notes) ? notes.map((note) => [note.id, note.title]) : [];
+            if (chosen && !options.some(([id]) => id === chosen)) {
+                options.unshift([chosen, chosenTitle]);
+            }
+            for (const [id, title] of options) {
+                const option = document.createElement("option");
+                option.value = id;
+                option.textContent = title;
+                select.appendChild(option);
+            }
+            select.value = chosen;
+            select.dataset.loaded = "1";
+        }
+
+        field("note-search").addEventListener("input", () => loadNotes(field("note-search").value.trim()));
+
+        field("note").addEventListener("change", () => {
+            feedback.textContent = "";
+            loadAssignees(field("assignee").value);
+        });
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            if (!field("title").value.trim()) {
+                feedback.textContent = "Enter a title.";
+                field("title").focus();
+                return;
+            }
+            const dueAt = field("due").value ? zonedInputToUtc(field("due").value, userTimezone) : null;
+            if (field("due").value && !dueAt) {
+                feedback.textContent = "Enter a valid due date and time.";
+                field("due").focus();
+                return;
+            }
+
+            const body = {
+                title: field("title").value,
+                description: field("description").value,
+                priority: field("priority").value,
+                due_at: dueAt,
+                note_id: field("note").value || null,
+                assignee_id: field("assignee").value || null,
+            };
+            feedback.textContent = "";
+            submit.disabled = true;
+            try {
+                const saved = task
+                    ? await api(`/api/tasks/${task.id}`, {method: "PATCH", body: JSON.stringify({...body, version: task.version})})
+                    : await api("/api/tasks", {method: "POST", body: JSON.stringify(body)});
+                close(saved);
+            } catch (error) {
+                submit.disabled = false;
+                feedback.textContent = error.status === 409
+                    ? "This task was changed by someone else. Close this dialog to see the current version, then edit again."
+                    : error.message;
+            }
+        });
+        form.querySelector('[data-action="cancel"]').addEventListener("click", () => close(null));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(null);
+            }
+        });
+
+        content.appendChild(form);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, () => close(null));
+        field("title").focus();
+        // Saving before the note and assignee choices are loaded would send them as empty.
+        submit.disabled = true;
+        loadNotes()
+            .then(() => (closed ? null : loadAssignees(task?.assignee?.id ?? "")))
+            .finally(() => {
+                submit.disabled = false;
+            });
+    });
+}
+
+if (tasksBoardEl) {
+    for (const column of tasksBoardEl.querySelectorAll(".kanban-column")) {
+        column.addEventListener("dragover", (event) => {
+            if (draggedTaskId) {
+                event.preventDefault();
+                column.classList.add("kanban-column--over");
+            }
+        });
+        column.addEventListener("dragleave", (event) => {
+            if (!column.contains(event.relatedTarget)) {
+                column.classList.remove("kanban-column--over");
+            }
+        });
+        column.addEventListener("drop", (event) => {
+            event.preventDefault();
+            column.classList.remove("kanban-column--over");
+            const task = allTasks.find((other) => other.id === draggedTaskId);
+            draggedTaskId = "";
+            if (!task) {
+                return;
+            }
+            // Another column: a status change, which the server allows or refuses.
+            if (column.dataset.status !== task.status) {
+                moveTask(task, column.dataset.status);
+                return;
+            }
+            if (task.role !== "owner") {
+                setFeedback(tasksFeedbackEl, "Only the owner of a task can change its place in the column.", true);
+                return;
+            }
+            // Same column: drop before the card under the pointer, or at the end.
+            const cards = Array.from(column.querySelectorAll(".kanban-card")).filter((card) => card.dataset.id !== task.id);
+            const below = cards.findIndex((card) => {
+                const box = card.getBoundingClientRect();
+                return event.clientY < box.top + box.height / 2;
+            });
+            const shownOwned = cards.filter((card) => allTasks.find((other) => other.id === card.dataset.id)?.role === "owner");
+            const index = below === -1 ? shownOwned.length : shownOwned.indexOf(cards.slice(below).find((card) => shownOwned.includes(card)) ?? null);
+            reorderTask(task, index === -1 ? shownOwned.length : index);
+        });
+    }
+}
+
 const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 const ATTACHMENT_EXTENSIONS = ["png", "jpg", "jpeg", "pdf", "txt", "csv"];
 
@@ -2741,6 +3218,8 @@ async function renderRoute() {
     showAccountView(accountPath);
     if (accountPath === PATH_PROFILE) {
         await loadAccountPage();
+    } else if (accountPath === PATH_TASKS) {
+        await loadTasks();
     } else if (accountPath === PATH_TAGS) {
         await loadTaxonomyPage();
     } else if (accountPath !== PATH_PROFILE) {
@@ -2845,6 +3324,15 @@ navTagsButtonEl.addEventListener("click", async () => {
     showAccountView(PATH_TAGS);
     await loadTaxonomyPage();
 });
+navTasksButtonEl.addEventListener("click", async () => {
+    navigateTo(PATH_TASKS);
+    showAccountView(PATH_TASKS);
+    await loadTasks();
+});
+document.getElementById("task-new-button").addEventListener("click", () => editTask(null));
+for (const filterEl of Object.values(taskFilterEls)) {
+    filterEl.addEventListener("change", renderTasks);
+}
 tagFilterEl.addEventListener("change", () => {
     currentPage = 1;
     refreshNotes().catch((error) => setStatus(error.message, true));

@@ -9,6 +9,7 @@ use App\Entity\NoteAttachment;
 use App\Entity\NoteRevision;
 use App\Entity\NoteShare;
 use App\Entity\Tag;
+use App\Entity\Task;
 use App\Entity\User;
 use App\Service\AttachmentStorage;
 use App\Service\SharingFixtures;
@@ -51,7 +52,9 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame([], $first['notes']['private_1']['shares']);
         self::assertSame(['viewer' => 'viewer', 'editor' => 'editor'], array_map(static fn (array $share): string => $share['role'], $first['notes']['shared_1']['shares']));
         self::assertSame('owner.'.self::RUN_A.'@qa-fixtures.test', $first['users']['owner']['email']);
-        self::assertSame(7, $first['version']);
+        self::assertSame(8, $first['version']);
+        self::assertCount(20, $first['tasks']);
+        self::assertEquals(['backlog' => 5, 'todo' => 5, 'in_progress' => 5, 'done' => 5], array_count_values(array_column($first['tasks'], 'status')));
         self::assertSame([1, 3], [$first['notes']['private_1']['version'], $first['notes']['shared_1']['version']]);
         self::assertSame(['pdf', 'png', 'txt'], array_keys($first['notes']['shared_1']['attachments']));
         self::assertSame([], $first['notes']['private_1']['attachments']);
@@ -91,6 +94,10 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame([$first['users']['owner']['id'], $first['users']['editor']['id'], $first['users']['owner']['id']], array_map(static fn (NoteRevision $r): ?string => $r->getActorId(), $history));
         self::assertSame($first['notes']['shared_1']['title'], $history[2]->getTitle());
         self::assertSame(1, $em->getRepository(NoteRevision::class)->count(['note' => $first['bulk_notes']['bulk_001']]));
+
+        $task = $em->find(Task::class, $first['tasks']['task_09']['id']);
+        self::assertSame([$first['users']['owner']['id'], $first['users']['editor']['id'], $first['notes']['shared_1']['id']], [$task->getOwner()->getId(), $task->getAssignee()->getId(), $task->getNote()->getId()]);
+        self::assertSame($first['tasks']['task_09']['due_at'], $task->getDueAt()->format(\DATE_ATOM));
 
         // Both runs have their three files; reseeding did not leave the old ones behind.
         $storage = self::getContainer()->get(AttachmentStorage::class);

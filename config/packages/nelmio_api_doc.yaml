@@ -161,6 +161,53 @@ nelmio_api_doc:
                           required: [content]
                           properties:
                               content: { type: string, example: 'Agenda: …' }
+                TaskPerson:
+                    type: object
+                    required: [id, email]
+                    properties:
+                        id: { type: string, format: uuid, example: 'f0f04231-8b66-4e5f-9d55-2eead364ea02' }
+                        email: { type: string, format: email, example: 'user@example.com' }
+                TaskWrite:
+                    type: object
+                    additionalProperties: false
+                    description: 'On create, "title" is required. On update, send only what changes, plus optionally "version".'
+                    properties:
+                        title: { type: string, minLength: 1, maxLength: 150, example: 'Prepare release notes' }
+                        description: { type: string, maxLength: 5000, example: 'Collect changes since 1.4.' }
+                        priority: { type: string, enum: [low, medium, high], default: medium }
+                        due_at: { type: string, format: date-time, nullable: true, description: 'ISO 8601 with a time zone; stored and returned in UTC.', example: '2026-10-20T15:00:00+03:00' }
+                        assignee_id: { type: string, format: uuid, nullable: true, description: 'Me or one of my collaborators (see GET /api/tasks/assignees).' }
+                        note_id: { type: string, format: uuid, nullable: true, description: 'A note I can see.' }
+                        version: { type: integer, minimum: 1, description: 'Update only: version last read; 409 if stale.' }
+                Task:
+                    type: object
+                    required: [id, title, description, status, priority, due_at, position, version, role, owner, assignee, note, allowed_statuses, created_at, updated_at]
+                    properties:
+                        id: { type: string, format: uuid, example: '3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a' }
+                        title: { type: string, example: 'Prepare release notes' }
+                        description: { type: string, example: 'Collect changes since 1.4.' }
+                        status: { type: string, enum: [backlog, todo, in_progress, done], example: todo }
+                        priority: { type: string, enum: [low, medium, high], example: high }
+                        due_at: { type: string, format: date-time, nullable: true, example: '2026-10-20T12:00:00+00:00' }
+                        position: { type: integer, description: 'Order inside its status column on the owner''s board, from 0.', example: 0 }
+                        version: { type: integer, minimum: 1, example: 3 }
+                        role: { type: string, enum: [owner, assignee], description: 'What the caller is for this task.', example: owner }
+                        owner: { $ref: '#/components/schemas/TaskPerson' }
+                        assignee:
+                            nullable: true
+                            allOf:
+                                - { $ref: '#/components/schemas/TaskPerson' }
+                        note:
+                            type: object
+                            nullable: true
+                            description: 'Linked note; null when there is none or the caller cannot see it.'
+                            required: [id, title]
+                            properties:
+                                id: { type: string, format: uuid }
+                                title: { type: string }
+                        allowed_statuses: { type: array, items: { type: string }, description: 'Statuses the task may move to from here.', example: [backlog, in_progress] }
+                        created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                        updated_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]
