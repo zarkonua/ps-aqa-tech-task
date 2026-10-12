@@ -34,6 +34,11 @@ const navTagsButtonEl = document.getElementById("nav-tags-button");
 const taxonomyView = document.getElementById("taxonomy-view");
 const tagFilterEl = document.getElementById("notes-tag-filter");
 const tagFilterLabelEl = document.getElementById("notes-tag-filter-label");
+const updatedFromEl = document.getElementById("notes-updated-from");
+const updatedToEl = document.getElementById("notes-updated-to");
+const activeFiltersEl = document.getElementById("active-filters");
+const activeFilterChipsEl = document.getElementById("active-filter-chips");
+const resetFiltersEl = document.getElementById("notes-reset-filters");
 const notesDashboardEl = document.getElementById("notes-dashboard");
 const createNoteSectionEl = document.getElementById("create-note-section");
 const notesListHeadingEl = document.getElementById("notes-list-heading");
@@ -70,6 +75,11 @@ const appDomReady = [
     taxonomyView,
     tagFilterEl,
     tagFilterLabelEl,
+    updatedFromEl,
+    updatedToEl,
+    activeFiltersEl,
+    activeFilterChipsEl,
+    resetFiltersEl,
     notesDashboardEl,
     createNoteSectionEl,
     notesListHeadingEl,
@@ -174,7 +184,9 @@ async function api(path, options = {}) {
         return response;
     }
 
-    return response.json();
+    const data = await response.json();
+
+    return options.withHeaders ? {data, headers: response.headers} : data;
 }
 
 function apiError(message, status) {
@@ -705,11 +717,35 @@ function openDeleteNoteModal(noteTitle) {
     });
 }
 
+const SORT_OPTIONS = {
+    updated_desc: ["updatedAt", "desc"],
+    updated_asc: ["updatedAt", "asc"],
+    created_desc: ["createdAt", "desc"],
+    created_asc: ["createdAt", "asc"],
+    title_asc: ["title", "asc"],
+    title_desc: ["title", "desc"],
+};
+
+// The filter controls and the keys they have in the page URL, with the value that means "not set".
+const FILTER_CONTROLS = [
+    ["q", searchQueryEl, ""],
+    ["field", searchFieldEl, "all"],
+    ["sort", searchSortEl, "updated_desc"],
+    ["size", pageSizeEl, "10"],
+    ["tag", tagFilterEl, ""],
+    ["from", updatedFromEl, ""],
+    ["to", updatedToEl, ""],
+];
+
+function isDateRangeInverted() {
+    return Boolean(updatedFromEl.value && updatedToEl.value && updatedFromEl.value > updatedToEl.value);
+}
+
 function buildNotesSearchParams() {
     const params = new URLSearchParams();
     const query = searchQueryEl.value.trim();
     const field = searchFieldEl.value;
-    const sort = searchSortEl.value;
+    const [sortBy, order] = SORT_OPTIONS[searchSortEl.value] || SORT_OPTIONS.updated_desc;
 
     if (query) {
         if (field === "title") {
@@ -721,15 +757,8 @@ function buildNotesSearchParams() {
         }
     }
 
-    if (sort === "updated_desc") {
-        params.set("sort[updatedAt]", "desc");
-    } else if (sort === "updated_asc") {
-        params.set("sort[updatedAt]", "asc");
-    } else if (sort === "title_asc") {
-        params.set("sort[title]", "asc");
-    } else if (sort === "title_desc") {
-        params.set("sort[title]", "desc");
-    }
+    params.set("sortBy", sortBy);
+    params.set("order", order);
 
     if (isSharedView()) {
         params.set("scope", "shared");
@@ -737,10 +766,123 @@ function buildNotesSearchParams() {
         params.set("tagIds", tagFilterEl.value);
     }
 
+    if (updatedFromEl.value) {
+        params.set("updatedFrom", updatedFromEl.value);
+    }
+    if (updatedToEl.value) {
+        params.set("updatedTo", updatedToEl.value);
+    }
+
     params.set("page", String(currentPage));
-    params.set("itemsPerPage", pageSizeEl.value);
+    params.set("limit", pageSizeEl.value);
 
     return params;
+}
+
+// Keeps the filters in the page URL, so a reload or a shared link shows the same list.
+function writeFiltersToUrl() {
+    if (!isNotesListVisible()) {
+        return;
+    }
+
+    const url = new URL(window.location.href);
+    for (const [key, control, unset] of FILTER_CONTROLS) {
+        const value = key === "q" ? control.value.trim() : control.value;
+        if (value && value !== unset && !(key === "tag" && isSharedView())) {
+            url.searchParams.set(key, value);
+        } else {
+            url.searchParams.delete(key);
+        }
+    }
+    if (currentPage > 1) {
+        url.searchParams.set("page", String(currentPage));
+    } else {
+        url.searchParams.delete("page");
+    }
+
+    const query = url.searchParams.toString();
+    window.history.replaceState({}, "", `${url.pathname}${query ? `?${query}` : ""}`);
+}
+
+function readFiltersFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    for (const [key, control, unset] of FILTER_CONTROLS) {
+        const value = (params.get(key) ?? unset).slice(0, 200);
+        control.value = value;
+        // A select ignores values it has no option for; a date input ignores non-dates.
+        if (control.value !== value) {
+            control.value = unset;
+        }
+    }
+
+    const page = Number.parseInt(params.get("page") || "1", 10);
+    currentPage = Number.isFinite(page) && page >= 1 ? page : 1;
+}
+
+function hasActiveFilters() {
+    return FILTER_CONTROLS.some(([key, control, unset]) => key !== "size"
+        && !(key === "tag" && isSharedView())
+        && !(key === "field" && !searchQueryEl.value.trim())
+        && control.value.trim() !== unset);
+}
+
+function resetFilters() {
+    for (const [key, control, unset] of FILTER_CONTROLS) {
+        if (key !== "size") {
+            control.value = unset;
+        }
+    }
+    currentPage = 1;
+    return refreshNotes().catch((error) => setStatus(error.message, true));
+}
+
+function renderActiveFilters() {
+    const chips = [];
+    const query = searchQueryEl.value.trim();
+    if (query) {
+        const where = {title: "Title", content: "Content"}[searchFieldEl.value] || "Text";
+        chips.push([`${where}: ${query}`, () => {
+            searchQueryEl.value = "";
+            searchFieldEl.value = "all";
+        }]);
+    }
+    if (tagFilterEl.value && !isSharedView()) {
+        chips.push([`Tag: ${tagFilterEl.selectedOptions[0]?.textContent || ""}`, () => {
+            tagFilterEl.value = "";
+        }]);
+    }
+    if (updatedFromEl.value) {
+        chips.push([`Updated from ${updatedFromEl.value}`, () => {
+            updatedFromEl.value = "";
+        }]);
+    }
+    if (updatedToEl.value) {
+        chips.push([`Updated to ${updatedToEl.value}`, () => {
+            updatedToEl.value = "";
+        }]);
+    }
+    if (searchSortEl.value !== "updated_desc") {
+        chips.push([`Sort: ${searchSortEl.selectedOptions[0]?.textContent || ""}`, () => {
+            searchSortEl.value = "updated_desc";
+        }]);
+    }
+
+    activeFilterChipsEl.innerHTML = "";
+    for (const [label, clear] of chips) {
+        const chip = document.createElement("li");
+        chip.className = "chip";
+        chip.innerHTML = `<span></span><button type="button" class="chip-remove">×</button>`;
+        chip.querySelector("span").textContent = label;
+        const removeButton = chip.querySelector("button");
+        removeButton.setAttribute("aria-label", `Remove filter ${label}`);
+        removeButton.addEventListener("click", () => {
+            clear();
+            currentPage = 1;
+            refreshNotes().catch((error) => setStatus(error.message, true));
+        });
+        activeFilterChipsEl.appendChild(chip);
+    }
+    activeFiltersEl.classList.toggle("hidden", chips.length === 0);
 }
 
 function renderNotes() {
@@ -752,9 +894,19 @@ function renderNotes() {
     notesListEl.innerHTML = "";
 
     if (totalItems === 0) {
-        const isSearching = searchQueryEl.value.trim() !== "";
+        if (hasActiveFilters()) {
+            notesListEl.innerHTML = `
+                <div class="panel notes-error">
+                    <p>No notes match these filters.</p>
+                    <button type="button" class="secondary" data-action="reset">Reset filters</button>
+                </div>
+            `;
+            notesListEl.querySelector('[data-action="reset"]').addEventListener("click", resetFilters);
+            return;
+        }
+
         notesListEl.innerHTML = `<div class="panel">${
-            isSharedView() && !isSearching ? "Nothing has been shared with you yet." : "No notes found."
+            isSharedView() ? "Nothing has been shared with you yet." : "No notes yet. Create your first note."
         }</div>`;
         return;
     }
@@ -1399,15 +1551,25 @@ function renderNotesError() {
 
 async function refreshNotes() {
     const requestId = ++notesRequestId;
+    writeFiltersToUrl();
+    renderActiveFilters();
+
+    if (isDateRangeInverted()) {
+        notesListEl.innerHTML = `<div class="panel notes-error"><p>"Updated from" is later than "Updated to". Change one of the dates.</p></div>`;
+        updatedToEl.setAttribute("aria-invalid", "true");
+        throw new Error('"Updated from" must not be later than "Updated to".');
+    }
+    updatedToEl.removeAttribute("aria-invalid");
+
     const params = buildNotesSearchParams();
     if (notesListEl.childElementCount === 0) {
         notesListEl.innerHTML = `<div class="panel">Loading…</div>`;
     }
     notesListEl.setAttribute("aria-busy", "true");
 
-    let notesPayload;
+    let result;
     try {
-        notesPayload = await api(`/api/notes?${params.toString()}`);
+        result = await api(`/api/notes?${params.toString()}`, {withHeaders: true});
     } catch (error) {
         if (requestId === notesRequestId) {
             notesListEl.setAttribute("aria-busy", "false");
@@ -1422,58 +1584,21 @@ async function refreshNotes() {
     }
     notesListEl.setAttribute("aria-busy", "false");
 
-    hasNextPage = false;
-    hasPrevPage = currentPage > 1;
-
-    if (Array.isArray(notesPayload)) {
-        notesCache = notesPayload;
-        totalItems = notesPayload.length;
-        hasNextPage = notesCache.length >= (Number.parseInt(pageSizeEl.value, 10) || 10);
-    } else if (notesPayload && typeof notesPayload === "object") {
-        if (Array.isArray(notesPayload["hydra:member"])) {
-            notesCache = notesPayload["hydra:member"];
-        } else if (Array.isArray(notesPayload.member)) {
-            notesCache = notesPayload.member;
-        } else {
-            notesCache = [];
-        }
-
-        const hydraTotal = Number.parseInt(String(notesPayload["hydra:totalItems"] ?? ""), 10);
-        const plainTotal = Number.parseInt(String(notesPayload.totalItems ?? ""), 10);
-
-        if (Number.isFinite(hydraTotal) && hydraTotal >= 0) {
-            totalItems = hydraTotal;
-        } else if (Number.isFinite(plainTotal) && plainTotal >= 0) {
-            totalItems = plainTotal;
-        } else {
-            totalItems = notesCache.length;
-        }
-
-        const view = notesPayload["hydra:view"] && typeof notesPayload["hydra:view"] === "object"
-            ? notesPayload["hydra:view"]
-            : null;
-        if (view) {
-            hasNextPage = typeof view["hydra:next"] === "string" && view["hydra:next"] !== "";
-            hasPrevPage = typeof view["hydra:previous"] === "string" && view["hydra:previous"] !== "";
-        } else {
-            hasNextPage = notesCache.length >= (Number.parseInt(pageSizeEl.value, 10) || 10);
-        }
-    } else {
-        notesCache = [];
-        totalItems = 0;
-        hasNextPage = false;
-        hasPrevPage = currentPage > 1;
-    }
-
     const pageSize = Number.parseInt(pageSizeEl.value, 10) || 10;
-    if (totalItems > notesCache.length || (!hasNextPage && !hasPrevPage)) {
-        totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-    } else if (hasNextPage) {
-        totalPages = Number.POSITIVE_INFINITY;
-    } else {
-        totalPages = currentPage;
+    const headerTotal = Number.parseInt(result.headers?.get("X-Total-Count") ?? "", 10);
+    notesCache = Array.isArray(result.data) ? result.data : [];
+    totalItems = Number.isFinite(headerTotal) ? headerTotal : notesCache.length;
+    totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+    // The last page can vanish under us (a filter got narrower, notes were deleted): show the new last one.
+    if (currentPage > totalPages) {
+        currentPage = totalPages;
+        await refreshNotes();
+        return;
     }
-    currentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+    hasPrevPage = currentPage > 1;
+    hasNextPage = currentPage < totalPages;
 
     renderNotes();
 }
@@ -1493,6 +1618,7 @@ async function enterNotesAfterAuth(successMessage) {
 
     try {
         await refreshProfile();
+        await refreshTagFilter();
         await refreshNotes();
         setStatus(successMessage);
     } catch (error) {
@@ -1555,9 +1681,9 @@ async function renderRoute() {
     if (accountPath === PATH_TAGS) {
         await loadTaxonomyPage();
     } else if (accountPath !== PATH_PROFILE) {
-        currentPage = 1;
         notesListEl.innerHTML = "";
         await refreshTagFilter();
+        readFiltersFromUrl();
         await refreshNotes().catch((error) => setStatus(error.message, true));
     }
 }
@@ -1686,6 +1812,13 @@ pageSizeEl.addEventListener("change", () => {
     currentPage = 1;
     refreshNotes().catch((error) => setStatus(error.message, true));
 });
+for (const dateEl of [updatedFromEl, updatedToEl]) {
+    dateEl.addEventListener("change", () => {
+        currentPage = 1;
+        refreshNotes().then(() => setStatus("")).catch((error) => setStatus(error.message, true));
+    });
+}
+resetFiltersEl.addEventListener("click", resetFilters);
 prevPageEl.addEventListener("click", () => {
     if (currentPage > 1) {
         currentPage -= 1;

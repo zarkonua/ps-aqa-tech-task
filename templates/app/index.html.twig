@@ -79,6 +79,8 @@
                                 <select id="notes-search-sort">
                                     <option value="updated_desc">Updated (newest first)</option>
                                     <option value="updated_asc">Updated (oldest first)</option>
+                                    <option value="created_desc">Created (newest first)</option>
+                                    <option value="created_asc">Created (oldest first)</option>
                                     <option value="title_asc">Title (A-Z)</option>
                                     <option value="title_desc">Title (Z-A)</option>
                                 </select>
@@ -95,7 +97,14 @@
                                     <option value="">All tags</option>
                                 </select>
                             </label>
+                            <label>Updated from <input type="date" id="notes-updated-from"></label>
+                            <label>Updated to <input type="date" id="notes-updated-to"></label>
                         </form>
+
+                        <div id="active-filters" class="active-filters hidden">
+                            <ul id="active-filter-chips" class="chip-list" aria-label="Active filters"></ul>
+                            <button id="notes-reset-filters" class="secondary" type="button">Reset all</button>
+                        </div>
 
                         <div class="list-meta">
                             <span id="notes-list-total">0 notes</span>

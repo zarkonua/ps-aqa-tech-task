@@ -427,6 +427,19 @@ button:disabled {
     font-weight: 600;
 }
 
+.active-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+}
+
+.active-filters button.secondary {
+    padding: 5px 10px;
+}
+
 .note-taxonomy {
     display: flex;
     flex-wrap: wrap;

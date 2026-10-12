@@ -19,6 +19,7 @@ use ApiPlatform\Doctrine\Orm\Filter\SortFilter;
 use App\ApiPlatform\NoteAccessExtension;
 use App\ApiPlatform\NoteTaxonomyFilterExtension;
 use App\Repository\NoteRepository;
+use App\State\NoteCollectionProvider;
 use App\State\NotePersistProcessor;
 use App\State\NoteRemoveProcessor;
 use Doctrine\Common\Collections\ArrayCollection;
@@ -32,13 +33,42 @@ use Symfony\Component\Validator\Constraints as Assert;
     operations: [
         new GetCollection(
             uriTemplate: '/api/notes',
-            paginationMaximumItemsPerPage: 50,
+            paginationItemsPerPage: 20,
+            paginationMaximumItemsPerPage: NoteCollectionProvider::MAX_LIMIT,
             paginationClientItemsPerPage: true,
             security: "is_granted('ROLE_USER')",
+            provider: NoteCollectionProvider::class,
             parameters: [
                 'q' => new QueryParameter(
                     filter: new FreeTextQueryFilter(new OrFilter(new PartialSearchFilter())),
                     properties: ['title', 'content'],
+                    schema: ['type' => 'string', 'maxLength' => 200],
+                    description: 'Text to find in the title or the content. Case-insensitive; "%" and "_" are taken literally.',
+                    constraints: [new Assert\Sequentially([
+                        new Assert\Type(type: 'string', message: 'q must be a string.'),
+                        new Assert\Length(max: 200, maxMessage: 'q cannot be longer than {{ limit }} characters.'),
+                    ])],
+                ),
+                'updatedFrom' => new QueryParameter(
+                    schema: ['type' => 'string', 'format' => 'date-time', 'example' => '2026-10-01'],
+                    description: 'Only notes updated at or after this moment (inclusive). ISO 8601 date (whole UTC day) or date-time with offset. Malformed: 400.',
+                ),
+                'updatedTo' => new QueryParameter(
+                    schema: ['type' => 'string', 'format' => 'date-time', 'example' => '2026-10-31'],
+                    description: 'Only notes updated at or before this moment (inclusive). Earlier than "updatedFrom": 422.',
+                ),
+                'sortBy' => new QueryParameter(
+                    // No "enum" in the schema: it would turn an unknown value into a 422, and the contract says 400.
+                    schema: ['type' => 'string', 'default' => 'updatedAt', 'example' => 'title'],
+                    description: 'Sort field: "title", "createdAt" or "updatedAt". Notes with equal values are ordered by ID. Unknown value: 400.',
+                ),
+                'order' => new QueryParameter(
+                    schema: ['type' => 'string', 'example' => 'asc'],
+                    description: 'Sort direction: "asc" or "desc". Default: "desc" for dates, "asc" for title. Unknown value: 400.',
+                ),
+                'limit' => new QueryParameter(
+                    schema: ['type' => 'integer', 'minimum' => 1, 'maximum' => NoteCollectionProvider::MAX_LIMIT, 'default' => 20],
+                    description: 'Page size. Out of range: 422. "itemsPerPage" is accepted as an older name.',
                 ),
                 'title' => new QueryParameter(filter: new PartialSearchFilter(), property: 'title'),
                 'content' => new QueryParameter(filter: new PartialSearchFilter(), property: 'content'),

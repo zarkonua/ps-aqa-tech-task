@@ -34,6 +34,11 @@ services:
         tags:
             - { name: 'api_platform.doctrine.orm.query_extension.collection' }
 
+    # After the built-in filter and order extensions, before pagination.
+    App\ApiPlatform\NoteSearchExtension:
+        tags:
+            - { name: 'api_platform.doctrine.orm.query_extension.collection', priority: -40 }
+
     # Must run before BrokenModeNoteNormalizer so the role is set in every app mode.
     App\Serializer\NoteRoleNormalizer:
         autoconfigure: false

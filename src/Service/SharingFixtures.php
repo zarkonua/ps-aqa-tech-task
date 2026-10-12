@@ -16,13 +16,14 @@ use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
 
 /**
- * Deterministic personas, notes, shares, tags and categories for exercising sharing and taxonomy.
+ * Deterministic personas, notes, shares, tags and categories for exercising sharing, taxonomy and search.
  * Everything is keyed by a run ID: the same run ID always yields the same emails and IDs,
  * and can be purged without touching other runs or real data.
  */
 final class SharingFixtures
 {
-    public const VERSION = 2;
+    public const VERSION = 3;
+    public const SEARCH_NOTES = 60;
     public const DEFAULT_PASSWORD = 'Fixture-Passw0rd!';
     public const PERSONAS = ['owner', 'viewer', 'editor', 'unrelated'];
 
@@ -66,6 +67,11 @@ final class SharingFixtures
     ];
 
     /** note => [owner tag keys, owner category key]. Notes not listed have no tags and no category. */
+    /** Title words of the search notes: mixed scripts, case pairs and characters that are special in SQL LIKE. */
+    private const SEARCH_WORDS = ['Alpha', 'Ünïcödé', '日本語メモ', 'Привет', 'emoji 🎉', '100% done', 'under_score', "O'Brien; DROP", 'Zeta', 'alpha'];
+    private const SEARCH_KEYWORDS = ['apple', 'banana', 'cherry'];
+    private const SEARCH_TAGS = ['work', 'idea', 'home', 'travel', 'later'];
+
     private const NOTE_TAXONOMY = [
         'private_2' => [['work', 'uber', 'japanese', 'cafe', 'idea', 'urgent', 'later', 'home', 'reading', 'travel'], 'projects'],
         'shared_1' => [['work', 'uber'], 'personal'],
@@ -86,7 +92,7 @@ final class SharingFixtures
     {
         $this->purge($runId);
 
-        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'tags' => [], 'categories' => [], 'notes' => []];
+        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => []];
 
         $users = [];
         foreach (self::PERSONAS as $persona) {
@@ -129,9 +135,76 @@ final class SharingFixtures
             }
         }
 
+        $timestamps = [];
+        foreach ($this->searchNotes($runId) as $key => $definition) {
+            $note = (new Note())->setOwner($users[$definition['owner']])->setTitle($definition['title'])->setContent($definition['content']);
+            self::forceId($note, $definition['id']);
+            $note->replaceTags(array_map(static fn (string $tagKey): Tag => $items['tags']['owner'][$tagKey], $definition['tags']));
+            $note->setCategory(null === $definition['category'] ? null : $items['categories']['owner'][$definition['category']]);
+            $this->entityManager->persist($note);
+            foreach ($definition['shares'] as $persona => $role) {
+                $this->entityManager->persist(new NoteShare($note, $users[$persona], ShareRole::from($role), self::id($runId, 'share', $key.'/'.$persona)));
+            }
+            $timestamps[$definition['id']] = [$definition['created_at'], $definition['updated_at']];
+            $manifest['search_notes'][$key] = $definition;
+        }
+
         $this->entityManager->flush();
 
+        // Fixed timestamps (several notes share each one), written past the entity's own clock.
+        foreach ($timestamps as $id => [$createdAt, $updatedAt]) {
+            $this->entityManager->getConnection()->executeStatement(
+                'UPDATE notes SET created_at = ?, updated_at = ? WHERE id = ?',
+                [substr(str_replace('T', ' ', $createdAt), 0, 19), substr(str_replace('T', ' ', $updatedAt), 0, 19), $id],
+            );
+        }
+        $this->entityManager->clear();
+
         return $manifest;
+    }
+
+    /**
+     * 60 notes for search, sorting and paging: 40 owned by the owner (some shared with the viewer
+     * and the editor) and 20 by the editor (half of them shared with the owner). Six notes share
+     * each "updated_at".
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function searchNotes(string $runId): array
+    {
+        $notes = [];
+        for ($i = 1; $i <= self::SEARCH_NOTES; ++$i) {
+            $key = sprintf('search_%02d', $i);
+            $ownedByOwner = 0 !== $i % 3;
+
+            $shares = [];
+            if ($ownedByOwner && 0 === $i % 5) {
+                $shares['viewer'] = ShareRole::Viewer->value;
+            }
+            if ($ownedByOwner && 0 === $i % 10) {
+                $shares['editor'] = ShareRole::Editor->value;
+            }
+            if (!$ownedByOwner && 0 === $i % 6) {
+                $shares['owner'] = ShareRole::Viewer->value;
+            }
+
+            // Tags and categories always belong to the note's owner; only the owner persona has fixture taxonomy.
+            $tags = $ownedByOwner ? array_values(array_unique([self::SEARCH_TAGS[$i % 5], ...(0 === $i % 4 ? ['work'] : [])])) : [];
+
+            $notes[$key] = [
+                'id' => self::id($runId, 'note', $key),
+                'title' => sprintf('[%s] %s %02d', $runId, self::SEARCH_WORDS[$i % 10], $i),
+                'content' => sprintf('Search fixture %02d: %s', $i, self::SEARCH_KEYWORDS[$i % 3]),
+                'owner' => $ownedByOwner ? 'owner' : 'editor',
+                'created_at' => (new \DateTimeImmutable('2026-01-01T00:00:00+00:00'))->modify(sprintf('+%d hours', $i))->format(\DATE_ATOM),
+                'updated_at' => (new \DateTimeImmutable('2026-02-01T12:00:00+00:00'))->modify(sprintf('+%d days', intdiv($i - 1, 6)))->format(\DATE_ATOM),
+                'tags' => $tags,
+                'category' => $ownedByOwner && 0 === $i % 7 ? 'projects' : null,
+                'shares' => $shares,
+            ];
+        }
+
+        return $notes;
     }
 
     /**

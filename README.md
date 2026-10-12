@@ -30,6 +30,7 @@ Key features:
 - Notes deletion confirmation: confirm and remove a note.
 - Notes sharing: share a note with other users as viewer or editor, and see notes shared with you. See [Notes Sharing and RBAC](docs/notes-sharing-rbac.md).
 - Tags and categories: per-user tags and categories, up to 10 tags and one category per note, filter notes by tag. See [Tags and Categories](docs/tags-categories.md).
+- Advanced search: combined filters, date range, stable sorting and totals for the notes list. See [Advanced Search and Sorting](docs/advanced-search-sorting.md).
 
 ## Tech Stack
 
@@ -74,7 +75,7 @@ docker compose run --rm php-cli php bin/console app:fixtures:sharing:seed my-run
 docker compose run --rm php-cli php bin/console app:fixtures:sharing:purge my-run
 ```
 
-Details: [sharing fixtures](docs/notes-sharing-rbac.md#fixtures), [tags and categories fixtures](docs/tags-categories.md#fixtures).
+Details: [sharing fixtures](docs/notes-sharing-rbac.md#fixtures), [tags and categories fixtures](docs/tags-categories.md#fixtures), [search fixtures](docs/advanced-search-sorting.md#fixtures).
 
 After pulling changes to entities, delete `var/cache/dev` and `var/cache/test`: `cache:clear` can leave stale API metadata behind.
 
