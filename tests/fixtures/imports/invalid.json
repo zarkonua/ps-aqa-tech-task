@@ -1,0 +1,20 @@
+{
+  "schema": "notes-export",
+  "schema_version": 1,
+  "notes": [
+    {
+      "title": "ok",
+      "content": "fine"
+    },
+    {
+      "title": "",
+      "content": "no title"
+    },
+    {
+      "title": "x",
+      "content": "y",
+      "owner_id": "someone"
+    },
+    "not an object"
+  ]
+}

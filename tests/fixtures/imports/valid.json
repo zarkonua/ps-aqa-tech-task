@@ -1,0 +1,27 @@
+{
+  "schema": "notes-export",
+  "schema_version": 1,
+  "exported_at": "2026-10-11T09:00:00+00:00",
+  "count": 2,
+  "notes": [
+    {
+      "external_id": "json-1",
+      "title": "From JSON",
+      "content": "Line one\nLine two",
+      "tags": [
+        "work",
+        "Ünï"
+      ],
+      "category": "Projects",
+      "created_at": "2026-10-01T08:00:00+00:00",
+      "updated_at": "2026-10-02T08:00:00+00:00"
+    },
+    {
+      "external_id": null,
+      "title": "=not a formula here",
+      "content": "JSON needs no escaping of formulas",
+      "tags": [],
+      "category": null
+    }
+  ]
+}

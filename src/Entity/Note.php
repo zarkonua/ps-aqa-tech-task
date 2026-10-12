@@ -130,6 +130,7 @@ use Symfony\Component\Validator\Constraints as Assert;
 )]
 #[ORM\Entity(repositoryClass: NoteRepository::class)]
 #[ORM\Table(name: 'notes')]
+#[ORM\UniqueConstraint(name: 'uniq_notes_owner_external_id', columns: ['owner_id', 'external_id'])]
 #[ORM\HasLifecycleCallbacks]
 class Note
 {
@@ -173,6 +174,13 @@ class Note
     #[Groups(['note:read'])]
     #[SerializedName('updated_at')]
     private \DateTimeImmutable $updatedAt;
+
+    /** The owner's own identifier for the note, set by imports and used to find it again. */
+    #[ORM\Column(name: 'external_id', length: 64, nullable: true)]
+    #[Groups(['note:read'])]
+    #[SerializedName('external_id')]
+    #[ApiProperty(description: 'Identifier given to the note by an import; unique among its owner\'s notes. null for notes created in the app.', schema: ['type' => 'string', 'nullable' => true, 'readOnly' => true, 'maxLength' => 64])]
+    private ?string $externalId = null;
 
     /** Number of the latest revision. Moves only when title or content change. */
     #[ORM\Column(type: 'integer', options: ['default' => 1])]
@@ -320,6 +328,18 @@ class Note
         return $this;
     }
 
+    public function getExternalId(): ?string
+    {
+        return $this->externalId;
+    }
+
+    public function setExternalId(?string $externalId): self
+    {
+        $this->externalId = $externalId;
+
+        return $this;
+    }
+
     public function getVersion(): int
     {
         return $this->version;
@@ -352,6 +372,7 @@ class Note
     {
         $this->category = $stored->category;
         $this->tags = $stored->tags;
+        $this->externalId = $stored->externalId;
 
         return $this;
     }

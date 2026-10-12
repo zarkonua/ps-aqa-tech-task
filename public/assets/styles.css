@@ -426,6 +426,43 @@ button:disabled {
     font-weight: 600;
 }
 
+.exchange-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
+.exchange-actions button {
+    padding: 5px 12px;
+}
+
+.table-scroll {
+    max-height: 260px;
+    overflow: auto;
+}
+
+.preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.preview-table caption {
+    padding-bottom: 4px;
+    color: var(--muted);
+    text-align: left;
+}
+
+.preview-table th,
+.preview-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
 .live-bar {
     display: flex;
     flex-wrap: wrap;

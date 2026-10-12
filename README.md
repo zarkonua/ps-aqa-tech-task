@@ -39,6 +39,7 @@ Key features:
 - Notifications: in-app notifications (and optional emails) about shares and tasks. See [Notifications](docs/notifications.md).
 - Audit log: an activity timeline per note and a full audit feed for administrators. See [Audit Log](docs/audit-log.md).
 - Realtime collaboration: live updates and presence while a note is open, over an authenticated event stream with a polling fallback. See [Realtime Collaboration](docs/realtime-collaboration.md).
+- Import and export: notes as CSV or JSON, with a preview before importing. See [Import and Export](docs/import-export.md).
 
 ## Tech Stack
 

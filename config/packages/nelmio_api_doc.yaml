@@ -308,6 +308,89 @@ nelmio_api_doc:
                             type: array
                             description: 'Who has the note open, including the caller.'
                             items: { $ref: '#/components/schemas/TaskPerson' }
+                NoteImportRequest:
+                    type: object
+                    required: [file]
+                    properties:
+                        file: { type: string, format: binary, description: 'CSV (header row with at least title and content; optional external_id, tags, category, created_at, updated_at) or a JSON export.' }
+                        mode: { type: string, enum: [atomic, partial], default: atomic }
+                        duplicates: { type: string, enum: [reject, skip, upsert], default: reject }
+                        format: { type: string, enum: [csv, json], description: 'Only needed when the file name does not end in .csv or .json.' }
+                NoteImportError:
+                    type: object
+                    required: [line, field, message]
+                    properties:
+                        line: { type: integer, description: 'CSV: line of the file the row starts on (the header is line 1). JSON: position in "notes", from 1.', example: 4 }
+                        field: { type: string, description: 'Column concerned; empty when the whole row is unusable.', example: title }
+                        message: { type: string, example: 'Title is required.' }
+                NoteImportPreview:
+                    type: object
+                    required: [format, mode, duplicates, total_rows, valid_rows, invalid_rows, create, update, skip, importable, errors, preview]
+                    properties:
+                        format: { type: string, enum: [csv, json] }
+                        mode: { type: string, enum: [atomic, partial] }
+                        duplicates: { type: string, enum: [reject, skip, upsert] }
+                        total_rows: { type: integer, example: 3 }
+                        valid_rows: { type: integer, example: 2 }
+                        invalid_rows: { type: integer, example: 1 }
+                        create: { type: integer, description: 'Rows that would become new notes.', example: 2 }
+                        update: { type: integer, description: 'Rows that would update a note of mine with the same external_id.', example: 0 }
+                        skip: { type: integer, description: 'Rows that would be left out because I already have that external_id.', example: 0 }
+                        importable: { type: boolean, description: 'Whether the import route would accept this file with these options.', example: false }
+                        errors: { type: array, description: 'At most 200.', items: { $ref: '#/components/schemas/NoteImportError' } }
+                        preview:
+                            type: array
+                            description: 'The first 20 valid rows as they would be imported.'
+                            items:
+                                type: object
+                                properties:
+                                    line: { type: integer }
+                                    action: { type: string, enum: [create, update, skip] }
+                                    external_id: { type: string, nullable: true }
+                                    title: { type: string }
+                                    content_length: { type: integer }
+                                    tags: { type: array, items: { type: string } }
+                                    category: { type: string, nullable: true }
+                NoteImportResult:
+                    type: object
+                    required: [format, mode, duplicates, total_rows, valid_rows, invalid_rows, create, update, skip, importable, errors, notes, imported]
+                    properties:
+                        total_rows: { type: integer, example: 3 }
+                        create: { type: integer, example: 2 }
+                        update: { type: integer, example: 0 }
+                        skip: { type: integer, example: 0 }
+                        invalid_rows: { type: integer, example: 1 }
+                        errors: { type: array, items: { $ref: '#/components/schemas/NoteImportError' } }
+                        imported: { type: boolean, example: true }
+                        notes:
+                            type: array
+                            items:
+                                type: object
+                                properties:
+                                    line: { type: integer, example: 2 }
+                                    action: { type: string, enum: [created, updated, skipped] }
+                                    id: { type: string, format: uuid }
+                NoteExport:
+                    type: object
+                    required: [schema, schema_version, exported_at, count, notes]
+                    properties:
+                        schema: { type: string, enum: [notes-export] }
+                        schema_version: { type: integer, enum: [1] }
+                        exported_at: { type: string, format: date-time, example: '2026-10-12T10:00:00+00:00' }
+                        count: { type: integer, example: 1 }
+                        notes:
+                            type: array
+                            items:
+                                type: object
+                                required: [external_id, title, content, tags, category, created_at, updated_at]
+                                properties:
+                                    external_id: { type: string, nullable: true, example: 'a-1' }
+                                    title: { type: string, example: 'Plan' }
+                                    content: { type: string, example: 'Text' }
+                                    tags: { type: array, items: { type: string }, example: [idea, work] }
+                                    category: { type: string, nullable: true, example: 'Projects' }
+                                    created_at: { type: string, format: date-time }
+                                    updated_at: { type: string, format: date-time }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]

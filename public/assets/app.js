@@ -373,6 +373,7 @@ function showAccountView(path) {
     profileView.classList.toggle("hidden", !isProfile);
     taxonomyView.classList.toggle("hidden", !isTags);
     createNoteSectionEl.classList.toggle("hidden", isShared);
+    document.getElementById("notes-import-button").classList.toggle("hidden", isShared);
     // The tag filter offers the signed-in user's own tags; shared notes carry their owner's.
     tagFilterLabelEl.classList.toggle("hidden", isShared);
     notesDashboardEl.classList.toggle("dashboard-grid--single", isShared);
@@ -2350,6 +2351,293 @@ function openHistoryDialog(note, canEdit) {
     });
 }
 
+// ----- Import and export -----
+
+function openExportDialog() {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Export notes");
+        const form = document.createElement("form");
+        form.className = "modal-form";
+        form.innerHTML = `
+            <fieldset class="preference-list">
+                <legend class="share-empty">Format</legend>
+                <label class="color-toggle"><input type="radio" name="format" value="csv" checked> CSV — for spreadsheets</label>
+                <label class="color-toggle"><input type="radio" name="format" value="json"> JSON — for other programs</label>
+            </fieldset>
+            <label>Which notes
+                <select name="scope">
+                    <option value="owned">My notes</option>
+                    <option value="shared">Notes shared with me</option>
+                    <option value="all">Both</option>
+                </select>
+            </label>
+            <p class="share-empty">In CSV files, values that a spreadsheet would run as a formula start with an apostrophe.</p>
+            <p class="share-feedback" role="alert"></p>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="close">Close</button>
+                <button type="submit">Download</button>
+            </div>
+        `;
+        const feedback = form.querySelector(".share-feedback");
+        const submit = form.querySelector('button[type="submit"]');
+        form.elements.namedItem("scope").value = isSharedView() ? "shared" : "owned";
+
+        let deactivate = () => {};
+        const close = () => {
+            backdrop.remove();
+            deactivate();
+            resolve();
+        };
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const format = form.elements.namedItem("format").value;
+            submit.disabled = true;
+            setFeedback(feedback, "");
+            try {
+                const response = await fetch(`/api/exports/notes?format=${format}&scope=${form.elements.namedItem("scope").value}`, {
+                    headers: {Authorization: `Bearer ${getToken() || ""}`},
+                });
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw apiError(extractValidationMessage(payload) || payload.error || payload.message || `Export failed: ${response.status}`, response.status);
+                }
+                const name = /filename=([^;]+)/.exec(response.headers.get("Content-Disposition") || "")?.[1] || `notes.${format}`;
+                const url = URL.createObjectURL(await response.blob());
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = name.replaceAll('"', "");
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                const count = Number.parseInt(response.headers.get("X-Total-Count") || "", 10);
+                setFeedback(feedback, Number.isFinite(count) ? `Exported ${count} note${count === 1 ? "" : "s"} to ${link.download}.` : "Export downloaded.");
+            } catch (error) {
+                if (error.status === 401) {
+                    close();
+                    signOutLocally("Your session has ended. Sign in again.", true);
+                    return;
+                }
+                setFeedback(feedback, retryHint(error), true);
+            } finally {
+                submit.disabled = false;
+            }
+        });
+        form.querySelector('[data-action="close"]').addEventListener("click", close);
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close();
+            }
+        });
+        content.appendChild(form);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, close);
+        form.querySelector('input[name="format"]').focus();
+    });
+}
+
+// Import in three steps: choose the file and options, look at what would happen, confirm.
+function openImportWizard() {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Import notes");
+        const body = document.createElement("div");
+        body.className = "modal-form";
+        body.innerHTML = `
+            <form data-step="choose" class="modal-form" novalidate>
+                <p class="share-empty">Step 1 of 3 — choose a CSV or JSON file (up to 1000 notes, 5 MB). A CSV file needs a header row with at least <code>title</code> and <code>content</code>; <code>external_id</code>, <code>tags</code> (separated by semicolons) and <code>category</code> are optional.</p>
+                <label>File <input type="file" name="file" accept=".csv,.json" required></label>
+                <fieldset class="preference-list">
+                    <legend class="share-empty">If some rows are invalid</legend>
+                    <label class="color-toggle"><input type="radio" name="mode" value="atomic" checked> import nothing</label>
+                    <label class="color-toggle"><input type="radio" name="mode" value="partial"> import the valid rows</label>
+                </fieldset>
+                <label>If I already have a note with the same external ID
+                    <select name="duplicates">
+                        <option value="reject">treat the row as an error</option>
+                        <option value="skip">skip the row</option>
+                        <option value="upsert">update my note</option>
+                    </select>
+                </label>
+                <p class="share-feedback" role="alert"></p>
+                <div class="modal-actions">
+                    <button type="button" class="secondary" data-action="close">Cancel</button>
+                    <button type="submit">Check file</button>
+                </div>
+            </form>
+            <div data-step="preview" class="modal-form hidden">
+                <p class="share-empty">Step 2 of 3 — nothing has been imported yet.</p>
+                <p data-role="summary" role="status"></p>
+                <div data-role="errors"></div>
+                <div class="table-scroll" data-role="rows"></div>
+                <p class="share-feedback" role="alert"></p>
+                <div class="modal-actions">
+                    <button type="button" class="secondary" data-action="back">Back</button>
+                    <button type="button" class="secondary" data-action="close">Cancel</button>
+                    <button type="button" data-action="import">Import</button>
+                </div>
+            </div>
+            <div data-step="done" class="modal-form hidden">
+                <p class="share-empty">Step 3 of 3 — done.</p>
+                <p data-role="result" role="status"></p>
+                <div data-role="left-out"></div>
+                <div class="modal-actions">
+                    <button type="button" data-action="close">Close</button>
+                </div>
+            </div>
+        `;
+        const steps = Object.fromEntries(Array.from(body.querySelectorAll("[data-step]")).map((step) => [step.dataset.step, step]));
+        const form = steps.choose;
+        let imported = false;
+        let deactivate = () => {};
+        const close = () => {
+            backdrop.remove();
+            deactivate();
+            resolve(imported);
+        };
+        const show = (name) => {
+            for (const [key, step] of Object.entries(steps)) {
+                step.classList.toggle("hidden", key !== name);
+            }
+            steps[name].querySelector("button:not([disabled]), input")?.focus();
+        };
+        const request = (path) => {
+            const data = new FormData();
+            data.append("file", form.elements.namedItem("file").files[0]);
+            data.append("mode", form.elements.namedItem("mode").value);
+            data.append("duplicates", form.elements.namedItem("duplicates").value);
+            return api(path, {method: "POST", body: data});
+        };
+        const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+        const errorList = (errors) => {
+            const wrapper = document.createElement("div");
+            if (!errors.length) {
+                return wrapper;
+            }
+            const heading = document.createElement("h4");
+            heading.className = "share-heading";
+            heading.textContent = `Problems (${errors.length})`;
+            const list = document.createElement("ul");
+            list.className = "bulk-failures";
+            for (const error of errors.slice(0, 50)) {
+                const item = document.createElement("li");
+                item.textContent = `Line ${error.line}${error.field ? `, ${error.field}` : ""}: ${error.message}`;
+                list.appendChild(item);
+            }
+            if (errors.length > 50) {
+                const more = document.createElement("li");
+                more.textContent = `…and ${errors.length - 50} more.`;
+                list.appendChild(more);
+            }
+            wrapper.append(heading, list);
+            return wrapper;
+        };
+
+        let lastPreview = null;
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const feedback = form.querySelector(".share-feedback");
+            const file = form.elements.namedItem("file").files[0];
+            if (!file) {
+                setFeedback(feedback, "Choose a file to import.", true);
+                return;
+            }
+            if (file.size > 5 * 1024 * 1024) {
+                setFeedback(feedback, "The file is larger than 5 MB.", true);
+                return;
+            }
+            const submit = form.querySelector('button[type="submit"]');
+            submit.disabled = true;
+            setFeedback(feedback, "Checking…");
+            try {
+                lastPreview = await request("/api/imports/notes/validate");
+            } catch (error) {
+                setFeedback(feedback, retryHint(error).replace(/^file: /, ""), true);
+                return;
+            } finally {
+                submit.disabled = false;
+            }
+            setFeedback(feedback, "");
+
+            const p = lastPreview;
+            steps.preview.querySelector('[data-role="summary"]').textContent =
+                `${plural(p.total_rows, "row")} in the file: ${p.create} to create, ${p.update} to update, ${p.skip} to skip, ${p.invalid_rows} invalid.`
+                + (p.importable ? "" : " With the option “import nothing”, this file cannot be imported until the problems are fixed.");
+            steps.preview.querySelector('[data-role="errors"]').replaceChildren(errorList(p.errors));
+            const rows = steps.preview.querySelector('[data-role="rows"]');
+            rows.innerHTML = "";
+            if (p.preview.length > 0) {
+                const table = document.createElement("table");
+                table.className = "preview-table";
+                table.innerHTML = `<caption>First ${p.preview.length} of ${p.valid_rows} valid rows</caption><thead><tr><th scope="col">Line</th><th scope="col">Will</th><th scope="col">Title</th><th scope="col">Tags</th><th scope="col">Category</th></tr></thead><tbody></tbody>`;
+                for (const row of p.preview) {
+                    const tr = document.createElement("tr");
+                    for (const value of [row.line, row.action, row.title, row.tags.join(", "), row.category || ""]) {
+                        const td = document.createElement("td");
+                        td.textContent = String(value);
+                        tr.appendChild(td);
+                    }
+                    table.querySelector("tbody").appendChild(tr);
+                }
+                rows.appendChild(table);
+            }
+            const importButton = steps.preview.querySelector('[data-action="import"]');
+            const changes = p.create + p.update;
+            importButton.disabled = !p.importable || changes === 0;
+            importButton.textContent = changes === 0 ? "Nothing to import" : `Import ${plural(changes, "note")}`;
+            setFeedback(steps.preview.querySelector(".share-feedback"), "");
+            show("preview");
+        });
+
+        steps.preview.querySelector('[data-action="back"]').addEventListener("click", () => show("choose"));
+        steps.preview.querySelector('[data-action="import"]').addEventListener("click", async () => {
+            const p = lastPreview;
+            const confirmed = await openConfirmModal({
+                title: "Import notes",
+                message: `Create ${plural(p.create, "note")}${p.update ? ` and update ${p.update} of your notes` : ""}?${p.invalid_rows ? ` ${plural(p.invalid_rows, "invalid row")} will be left out.` : ""}`,
+                confirmLabel: "Import",
+            });
+            if (!confirmed) {
+                return;
+            }
+            const feedback = steps.preview.querySelector(".share-feedback");
+            const importButton = steps.preview.querySelector('[data-action="import"]');
+            importButton.disabled = true;
+            setFeedback(feedback, "Importing…");
+            try {
+                const result = await request("/api/imports/notes");
+                imported = true;
+                const counts = {created: 0, updated: 0, skipped: 0};
+                for (const note of result.notes || []) {
+                    counts[note.action] += 1;
+                }
+                steps.done.querySelector('[data-role="result"]').textContent =
+                    `${plural(counts.created, "note")} created, ${counts.updated} updated, ${counts.skipped} skipped${result.invalid_rows ? `, ${plural(result.invalid_rows, "invalid row")} left out` : ""}.`;
+                steps.done.querySelector('[data-role="left-out"]').replaceChildren(errorList(result.errors || []));
+                show("done");
+            } catch (error) {
+                // The file or my notes changed since the check: show the current state of things.
+                importButton.disabled = false;
+                setFeedback(feedback, `${retryHint(error)} Nothing was imported.`, true);
+            }
+        });
+
+        for (const button of body.querySelectorAll('[data-action="close"]')) {
+            button.addEventListener("click", close);
+        }
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close();
+            }
+        });
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        backdrop.querySelector(".modal-dialog").classList.add("modal-dialog--wide");
+        deactivate = activateDialog(backdrop, close);
+        form.elements.namedItem("file").focus();
+    });
+}
+
 // ----- Audit log -----
 
 // Says what an audit event means, from its type and its summary. The summary never holds the changed text.
@@ -4032,6 +4320,15 @@ navTagsButtonEl.addEventListener("click", async () => {
     navigateTo(PATH_TAGS);
     showAccountView(PATH_TAGS);
     await loadTaxonomyPage();
+});
+document.getElementById("notes-export-button").addEventListener("click", openExportDialog);
+document.getElementById("notes-import-button").addEventListener("click", async () => {
+    if (await openImportWizard()) {
+        currentPage = 1;
+        await refreshTagFilter();
+        await refreshNotes().catch((error) => setStatus(error.message, true));
+        setStatus("Import finished.");
+    }
 });
 navAuditButtonEl.addEventListener("click", async () => {
     navigateTo(PATH_AUDIT);
