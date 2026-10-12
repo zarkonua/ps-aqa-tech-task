@@ -152,6 +152,21 @@ final class NoteSharingTest extends ApiTestCase
         self::assertSame(404, $this->api('owner', 'POST', $this->sharesUri('private_1'), ['email' => $this->email('pending'), 'role' => 'viewer']));
     }
 
+    public function testEmailLookupsThroughSharingAreThrottled(): void
+    {
+        for ($i = 0; $i < 30; ++$i) {
+            self::assertSame(404, $this->api('owner', 'POST', $this->sharesUri('private_1'), ['email' => sprintf('guess%d.%s@api-tests.test', $i, $this->runId), 'role' => 'viewer']));
+        }
+        self::assertSame(429, $this->api('owner', 'POST', $this->sharesUri('private_1'), ['email' => $this->email('viewer'), 'role' => 'viewer']));
+        self::assertGreaterThan(0, (int) $this->client->getResponse()->headers->get('Retry-After'));
+        self::assertSame([], $this->em()->getRepository(NoteShare::class)->findBy(['note' => $this->noteIds['private_1']]));
+
+        // Per user, and only for granting.
+        self::assertSame(201, $this->api('unrelated', 'POST', '/api/notes', ['title' => 't', 'content' => 'c']));
+        self::assertSame(201, $this->api('unrelated', 'POST', '/api/notes/'.$this->json()['id'].'/shares', ['email' => $this->email('viewer'), 'role' => 'viewer']));
+        self::assertSame(200, $this->api('owner', 'GET', $this->sharesUri('private_1')));
+    }
+
     public function testNoteCannotBeSharedWithItsOwner(): void
     {
         self::assertSame(422, $this->api('owner', 'POST', $this->sharesUri('private_1'), ['email' => $this->email('owner'), 'role' => 'editor']));
@@ -399,7 +414,7 @@ final class NoteSharingTest extends ApiTestCase
 
         $collection = $doc['paths']['/api/notes/{id}/shares'];
         $item = $doc['paths']['/api/notes/{id}/shares/{shareId}'];
-        self::assertSame(['201', '400', '404', '409', '422', '401', '403', '500'], array_map('strval', array_keys($collection['post']['responses'])));
+        self::assertEqualsCanonicalizing(['201', '400', '404', '409', '422', '429', '401', '403', '500'], array_map('strval', array_keys($collection['post']['responses'])));
         self::assertEqualsCanonicalizing(['200', '404', '422', '401', '403', '500'], array_map('strval', array_keys($collection['get']['responses'])));
         self::assertArrayHasKey('409', $item['patch']['responses']);
         self::assertArrayHasKey('204', $item['delete']['responses']);

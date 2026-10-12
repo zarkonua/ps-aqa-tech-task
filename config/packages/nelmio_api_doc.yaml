@@ -101,6 +101,29 @@ nelmio_api_doc:
                             type: array
                             maxItems: 10
                             items: { $ref: '#/components/schemas/TaxonomyItemBrief' }
+                RateLimitError:
+                    type: object
+                    required: [error, retry_after]
+                    properties:
+                        error: { type: string, example: 'Too many attempts. Try again later.' }
+                        retry_after: { type: integer, description: 'Seconds to wait; also sent as the Retry-After header.', example: 540 }
+                Message:
+                    type: object
+                    required: [message]
+                    properties:
+                        message: { type: string, example: 'Password updated.' }
+                AccountProfile:
+                    type: object
+                    required: [id, email, pending_email]
+                    properties:
+                        id: { type: string, format: uuid, example: 'f0f04231-8b66-4e5f-9d55-2eead364ea02' }
+                        email: { type: string, format: email, example: 'user@example.com' }
+                        pending_email: { type: string, format: email, nullable: true, description: 'New address waiting to be confirmed, if any.', example: 'new@example.com' }
+                AccountSettings:
+                    type: object
+                    required: [timezone]
+                    properties:
+                        timezone: { type: string, description: 'IANA time zone name.', example: 'Europe/Kyiv' }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]

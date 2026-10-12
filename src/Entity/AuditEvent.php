@@ -30,6 +30,12 @@ class AuditEvent
     public const CATEGORY_DELETED = 'category.deleted';
     public const NOTE_TAGS_CHANGED = 'note.tags_changed';
     public const NOTE_CATEGORY_CHANGED = 'note.category_changed';
+    public const PASSWORD_RESET_REQUESTED = 'account.password_reset_requested';
+    public const PASSWORD_RESET_COMPLETED = 'account.password_reset_completed';
+    public const PASSWORD_CHANGED = 'account.password_changed';
+    public const EMAIL_CHANGE_REQUESTED = 'account.email_change_requested';
+    public const EMAIL_CHANGED = 'account.email_changed';
+    public const SETTINGS_UPDATED = 'account.settings_updated';
 
     #[ORM\Id]
     #[ORM\Column(type: 'string', length: 36)]

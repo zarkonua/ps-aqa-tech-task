@@ -55,13 +55,25 @@ abstract class ApiController extends AbstractController
      */
     protected function guarded(\Closure $action): JsonResponse
     {
-        try {
+        return $this->guardedPublic(function () use ($action): JsonResponse {
             $user = $this->getUser();
             if (!$user instanceof User) {
                 return $this->error('Unauthorized.', Response::HTTP_UNAUTHORIZED);
             }
 
             return $action($user);
+        });
+    }
+
+    /**
+     * Same failure handling as guarded(), for routes that need no signed-in user.
+     *
+     * @param \Closure(): JsonResponse $action
+     */
+    protected function guardedPublic(\Closure $action): JsonResponse
+    {
+        try {
+            return $action();
         } catch (MalformedPayloadException $e) {
             return $this->error($e->getMessage());
         } catch (\Throwable $e) {
@@ -147,6 +159,15 @@ abstract class ApiController extends AbstractController
         }
 
         return $value;
+    }
+
+    protected function tooManyRequests(int $retryAfter): JsonResponse
+    {
+        return $this->json(
+            ['error' => 'Too many attempts. Try again later.', 'retry_after' => $retryAfter],
+            Response::HTTP_TOO_MANY_REQUESTS,
+            ['Retry-After' => (string) $retryAfter],
+        );
     }
 
     /**

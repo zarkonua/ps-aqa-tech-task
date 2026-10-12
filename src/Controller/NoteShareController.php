@@ -14,6 +14,7 @@ use App\Repository\NoteShareRepository;
 use App\Repository\UserRepository;
 use App\Security\NoteAccess;
 use App\Service\AuditLogger;
+use App\Service\Throttle;
 use App\Util\Uuid;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
@@ -38,6 +39,7 @@ final class NoteShareController extends ApiController
     private const MAX_EMAIL_LENGTH = 190;
     private const DEFAULT_ITEMS_PER_PAGE = 50;
     private const MAX_ITEMS_PER_PAGE = 100;
+    public const GRANTS_PER_MINUTE = 30;
 
     public function __construct(
         private readonly NoteRepository $notes,
@@ -46,6 +48,7 @@ final class NoteShareController extends ApiController
         private readonly NoteAccess $access,
         private readonly AuditLogger $audit,
         private readonly EntityManagerInterface $entityManager,
+        private readonly Throttle $throttle,
     ) {
     }
 
@@ -67,6 +70,7 @@ final class NoteShareController extends ApiController
     #[OA\Response(response: Response::HTTP_NOT_FOUND, description: 'Note is missing or not visible to the caller, or no registered user has this email.', content: new OA\JsonContent(ref: '#/components/schemas/ApiError', example: ['error' => 'User not found.']))]
     #[OA\Response(response: Response::HTTP_CONFLICT, description: 'The note is already shared with this user.', content: new OA\JsonContent(ref: '#/components/schemas/ApiError', example: ['error' => 'Note is already shared with this user.']))]
     #[OA\Response(response: Response::HTTP_UNPROCESSABLE_ENTITY, description: 'Validation failed.', content: new OA\JsonContent(ref: '#/components/schemas/ValidationError'))]
+    #[OA\Response(response: Response::HTTP_TOO_MANY_REQUESTS, description: 'More than 30 share attempts in a minute.', content: new OA\JsonContent(ref: '#/components/schemas/RateLimitError'))]
     public function create(string $id, Request $request): JsonResponse
     {
         return $this->handle($id, function (Note $note, User $actor) use ($request): JsonResponse {
@@ -76,6 +80,12 @@ final class NoteShareController extends ApiController
             $role = $this->validatedRole($payload, $violations);
             if ([] !== $violations) {
                 return $this->validationError($violations);
+            }
+
+            // The answer tells whether an email is registered, so lookups are limited per user.
+            $retryAfter = $this->throttle->attempt('share_grant', (string) $actor->getId(), self::GRANTS_PER_MINUTE, 60);
+            if (null !== $retryAfter) {
+                return $this->tooManyRequests($retryAfter);
             }
 
             $target = $this->users->findOneByEmail($email);

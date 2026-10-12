@@ -39,6 +39,21 @@ const updatedToEl = document.getElementById("notes-updated-to");
 const activeFiltersEl = document.getElementById("active-filters");
 const activeFilterChipsEl = document.getElementById("active-filter-chips");
 const resetFiltersEl = document.getElementById("notes-reset-filters");
+const forgotButtonEl = document.getElementById("forgot-password-button");
+const forgotCardEl = document.getElementById("forgot-password-card");
+const forgotFormEl = document.getElementById("forgot-password-form");
+const forgotFeedbackEl = document.getElementById("forgot-feedback");
+const resetCardEl = document.getElementById("reset-password-card");
+const resetFormEl = document.getElementById("reset-password-form");
+const resetFeedbackEl = document.getElementById("reset-feedback");
+const resetRequestNewEl = document.getElementById("reset-request-new");
+const profilePendingEl = document.getElementById("profile-pending");
+const changeEmailFormEl = document.getElementById("change-email-form");
+const changeEmailFeedbackEl = document.getElementById("change-email-feedback");
+const settingsFormEl = document.getElementById("settings-form");
+const settingsTimezoneEl = document.getElementById("settings-timezone");
+const settingsFeedbackEl = document.getElementById("settings-feedback");
+const changePasswordButtonEl = document.getElementById("change-password-button");
 const notesDashboardEl = document.getElementById("notes-dashboard");
 const createNoteSectionEl = document.getElementById("create-note-section");
 const notesListHeadingEl = document.getElementById("notes-list-heading");
@@ -80,6 +95,21 @@ const appDomReady = [
     activeFiltersEl,
     activeFilterChipsEl,
     resetFiltersEl,
+    forgotButtonEl,
+    forgotCardEl,
+    forgotFormEl,
+    forgotFeedbackEl,
+    resetCardEl,
+    resetFormEl,
+    resetFeedbackEl,
+    resetRequestNewEl,
+    profilePendingEl,
+    changeEmailFormEl,
+    changeEmailFeedbackEl,
+    settingsFormEl,
+    settingsTimezoneEl,
+    settingsFeedbackEl,
+    changePasswordButtonEl,
     notesDashboardEl,
     createNoteSectionEl,
     notesListHeadingEl,
@@ -94,6 +124,8 @@ let totalPages = 1;
 let hasNextPage = false;
 let hasPrevPage = false;
 let notesRequestId = 0;
+let userTimezone = "UTC";
+let pendingResetToken = "";
 
 function getToken() {
     return localStorage.getItem(TOKEN_KEY);
@@ -137,6 +169,8 @@ function clearEmailConfirmationParamsFromUrl() {
     const url = new URL(window.location.href);
     url.searchParams.delete("confirm_email");
     url.searchParams.delete("confirm_code");
+    url.searchParams.delete("reset_token");
+    url.searchParams.delete("email_change_token");
     const query = url.searchParams.toString();
     const nextUrl = `${url.pathname}${query ? `?${query}` : ""}${url.hash}`;
     window.history.replaceState({}, "", nextUrl);
@@ -151,7 +185,8 @@ async function api(path, options = {}) {
         headers["Content-Type"] = "application/json";
     }
 
-    const token = getToken();
+    // Public calls (reset and confirmation links) must work whatever state the stored session is in.
+    const token = options.anonymous ? null : getToken();
     if (token) {
         headers["Authorization"] = `Bearer ${token}`;
     }
@@ -159,6 +194,16 @@ async function api(path, options = {}) {
     const response = await fetch(path, {...options, headers});
     if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
+
+        // The session ended on the server: expired, or the password or email was changed elsewhere.
+        if (response.status === 401 && token && getToken() === token) {
+            signOutLocally("Your session has ended. Sign in again.", true);
+            throw apiError("Your session has ended. Sign in again.", 401);
+        }
+        // Requests still queued behind the one that ended the session carry no token any more.
+        if (response.status === 401 && !token && !options.anonymous && !path.startsWith("/api/auth/sign")) {
+            throw apiError("Your session has ended. Sign in again.", 401);
+        }
 
         if (response.status >= 500) {
             throw apiError("500", response.status);
@@ -927,7 +972,7 @@ function renderNotes() {
             ${sharedBy}
             ${taxonomyChipsHtml(note)}
             <p>${escapeHtml(note.content || "")}</p>
-            <small>Updated: ${escapeHtml(note.updated_at || "-")}</small>
+            <small>Updated: <time datetime="${escapeHtml(note.updated_at || "")}">${escapeHtml(formatTimestamp(note.updated_at))}</time></small>
             <div class="note-actions">
                 ${canEdit ? `<button data-action="edit">Update</button>` : ""}
                 ${canEdit ? `<button class="secondary" data-action="tags">Tags</button>` : ""}
@@ -1006,6 +1051,186 @@ function setProfile(profile) {
     accountProfile = profile;
     profileEmailEl.textContent = profile?.email ?? "-";
     profileIdEl.textContent = profile?.id ?? "-";
+    profilePendingEl.classList.toggle("hidden", !profile?.pending_email);
+    document.getElementById("profile-pending-email").textContent = profile?.pending_email ?? "";
+}
+
+// Timestamps are shown in the time zone chosen in the account settings.
+function formatTimestamp(value) {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) {
+        return "-";
+    }
+
+    try {
+        const text = new Intl.DateTimeFormat("en-CA", {
+            timeZone: userTimezone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23",
+        }).format(date).replace(",", "");
+        return `${text} (${userTimezone})`;
+    } catch {
+        return value;
+    }
+}
+
+function setFeedback(element, message, isError = false) {
+    element.textContent = message;
+    element.classList.toggle("share-feedback--error", Boolean(message) && isError);
+    element.classList.toggle("share-feedback--ok", Boolean(message) && !isError);
+}
+
+function retryHint(error) {
+    return error?.status === 429 ? "Too many attempts. Wait a few minutes and try again." : error.message;
+}
+
+function showAuthCard(card) {
+    forgotCardEl.classList.toggle("hidden", card !== "forgot");
+    resetCardEl.classList.toggle("hidden", card !== "reset");
+}
+
+function fillTimezones(selected) {
+    let zones = [];
+    try {
+        zones = Intl.supportedValuesOf("timeZone");
+    } catch {
+        zones = [];
+    }
+    const names = Array.from(new Set(["UTC", selected, ...zones])).filter(Boolean);
+    settingsTimezoneEl.innerHTML = "";
+    for (const name of names) {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        settingsTimezoneEl.appendChild(option);
+    }
+    settingsTimezoneEl.value = selected;
+}
+
+async function loadSettings() {
+    try {
+        const settings = await api("/api/account/settings");
+        userTimezone = typeof settings?.timezone === "string" ? settings.timezone : "UTC";
+    } catch {
+        userTimezone = "UTC";
+    }
+    fillTimezones(userTimezone);
+}
+
+async function loadAccountPage() {
+    setFeedback(changeEmailFeedbackEl, "");
+    setFeedback(settingsFeedbackEl, "");
+    try {
+        setProfile(await api("/api/account/profile"));
+    } catch (error) {
+        setStatus(error.message, true);
+    }
+    await loadSettings();
+}
+
+// The session is over (password or email changed elsewhere, or the token expired).
+function signOutLocally(message, isError = false) {
+    clearToken();
+    notesCache = [];
+    notesListEl.innerHTML = "";
+    setProfile(null);
+    userTimezone = "UTC";
+    navigateTo("/");
+    showAuthUI();
+    setStatus(message, isError);
+}
+
+function openChangePasswordDialog() {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Change password");
+
+        const form = document.createElement("form");
+        form.className = "modal-form";
+        form.noValidate = true;
+        form.innerHTML = `
+            <label>Current password <input type="password" name="current" autocomplete="current-password" required></label>
+            <label>New password
+                <input type="password" name="new" autocomplete="new-password" minlength="12" maxlength="128" required aria-describedby="change-password-hint">
+            </label>
+            <label>Repeat new password <input type="password" name="repeat" autocomplete="new-password" required></label>
+            <small id="change-password-hint">12 to 128 characters. You will be signed out on every other device.</small>
+            <p class="share-feedback share-feedback--error" role="alert"></p>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="cancel">Cancel</button>
+                <button type="submit">Change password</button>
+            </div>
+        `;
+        const current = form.querySelector('input[name="current"]');
+        const next = form.querySelector('input[name="new"]');
+        const repeat = form.querySelector('input[name="repeat"]');
+        const feedback = form.querySelector(".share-feedback");
+        const submit = form.querySelector('button[type="submit"]');
+
+        let deactivate = () => {};
+        const close = (result) => {
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const problem = passwordFormProblem(next.value, repeat.value) || (current.value ? "" : "Enter your current password.");
+            if (problem) {
+                feedback.textContent = problem;
+                (current.value ? next : current).focus();
+                return;
+            }
+
+            feedback.textContent = "";
+            submit.disabled = true;
+            try {
+                const result = await api("/api/account/change-password", {
+                    method: "POST",
+                    body: JSON.stringify({current_password: current.value, new_password: next.value}),
+                });
+                // The old token stopped working with the change.
+                setToken(result.token);
+                close(true);
+            } catch (error) {
+                submit.disabled = false;
+                feedback.textContent = retryHint(error);
+                if (error.status === 403) {
+                    current.focus();
+                    current.select();
+                }
+            }
+        });
+        form.querySelector('[data-action="cancel"]').addEventListener("click", () => close(false));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(false);
+            }
+        });
+
+        content.appendChild(form);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, () => close(false));
+        current.focus();
+    });
+}
+
+function passwordFormProblem(password, repeated) {
+    const length = Array.from(password).length;
+    if (length < 12) {
+        return "The new password must be at least 12 characters.";
+    }
+    if (length > 128) {
+        return "The new password cannot be longer than 128 characters.";
+    }
+    if (password !== repeated) {
+        return "The two new passwords do not match.";
+    }
+    return "";
 }
 
 function colorDotHtml(color) {
@@ -1606,6 +1831,7 @@ async function refreshNotes() {
 async function refreshProfile() {
     const me = await api("/api/auth/me");
     setProfile(me);
+    await loadSettings();
 }
 
 async function ensureAuthenticated() {
@@ -1653,9 +1879,53 @@ async function tryConfirmFromLink() {
     return true;
 }
 
+// A reset link shows the "Reset Password" form; the token is kept out of the address bar.
+function tryResetFromLink() {
+    const token = (new URL(window.location.href).searchParams.get("reset_token") || "").trim();
+    if (!token) {
+        return false;
+    }
+
+    pendingResetToken = token;
+    clearEmailConfirmationParamsFromUrl();
+    clearToken();
+    showAuthUI();
+    showAuthCard("reset");
+    resetFormEl.reset();
+    resetFormEl.classList.remove("hidden");
+    resetRequestNewEl.classList.add("hidden");
+    setFeedback(resetFeedbackEl, "");
+    setStatus("Choose a new password.");
+    document.getElementById("reset-password").focus();
+
+    return true;
+}
+
+async function tryEmailChangeFromLink() {
+    const token = (new URL(window.location.href).searchParams.get("email_change_token") || "").trim();
+    if (!token) {
+        return false;
+    }
+
+    clearEmailConfirmationParamsFromUrl();
+    try {
+        const result = await api("/api/account/email/confirm", {method: "POST", anonymous: true, body: JSON.stringify({token})});
+        signOutLocally(result.message || "Email address changed. Sign in with your new email.");
+    } catch (error) {
+        setStatus(retryHint(error), true);
+        return false;
+    }
+
+    return true;
+}
+
 async function renderRoute() {
     const linkConfirmed = await tryConfirmFromLink();
     if (linkConfirmed) {
+        return;
+    }
+
+    if (tryResetFromLink() || await tryEmailChangeFromLink()) {
         return;
     }
 
@@ -1678,7 +1948,9 @@ async function renderRoute() {
     }
 
     showAccountView(accountPath);
-    if (accountPath === PATH_TAGS) {
+    if (accountPath === PATH_PROFILE) {
+        await loadAccountPage();
+    } else if (accountPath === PATH_TAGS) {
         await loadTaxonomyPage();
     } else if (accountPath !== PATH_PROFILE) {
         notesListEl.innerHTML = "";
@@ -1749,6 +2021,7 @@ createNoteFormEl.addEventListener("submit", async (event) => {
 });
 
 logoutButtonEl.addEventListener("click", () => {
+    userTimezone = "UTC";
     clearToken();
     notesCache = [];
     totalItems = 0;
@@ -1787,7 +2060,140 @@ tagFilterEl.addEventListener("change", () => {
 navProfileButtonEl.addEventListener("click", async () => {
     navigateTo(PATH_PROFILE);
     showAccountView(PATH_PROFILE);
-    await refreshProfile();
+    await loadAccountPage();
+});
+
+forgotButtonEl.addEventListener("click", () => {
+    showAuthCard("forgot");
+    setFeedback(forgotFeedbackEl, "");
+    const email = document.getElementById("forgot-email");
+    email.value = document.getElementById("signin-email").value;
+    email.focus();
+});
+
+forgotFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const emailInput = document.getElementById("forgot-email");
+    if (!emailInput.value.trim() || !emailInput.checkValidity()) {
+        setFeedback(forgotFeedbackEl, "Enter a valid email address.", true);
+        emailInput.focus();
+        return;
+    }
+
+    const submit = forgotFormEl.querySelector("button");
+    submit.disabled = true;
+    try {
+        const result = await api("/api/auth/password-reset/request", {
+            method: "POST",
+            anonymous: true,
+            body: JSON.stringify({email: emailInput.value.trim()}),
+        });
+        setFeedback(forgotFeedbackEl, result.message || "If an account exists for this email, a password reset link has been sent.");
+    } catch (error) {
+        setFeedback(forgotFeedbackEl, retryHint(error), true);
+    } finally {
+        submit.disabled = false;
+    }
+});
+
+resetFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const password = document.getElementById("reset-password");
+    const problem = passwordFormProblem(password.value, document.getElementById("reset-password-repeat").value);
+    if (problem) {
+        setFeedback(resetFeedbackEl, problem, true);
+        password.focus();
+        return;
+    }
+
+    const submit = resetFormEl.querySelector("button");
+    submit.disabled = true;
+    try {
+        const result = await api("/api/auth/password-reset/confirm", {
+            method: "POST",
+            anonymous: true,
+            body: JSON.stringify({token: pendingResetToken, password: password.value}),
+        });
+        pendingResetToken = "";
+        resetFormEl.reset();
+        showAuthCard(null);
+        setStatus(result.message || "Password updated. Sign in with your new password.");
+        document.getElementById("signin-email").focus();
+    } catch (error) {
+        const aboutLink = /link/i.test(error.message);
+        setFeedback(resetFeedbackEl, retryHint(error).replace(/^token: /, ""), true);
+        // An expired or used link cannot be retried: offer a new one instead of the form.
+        if (error.status === 422 && aboutLink) {
+            resetFormEl.classList.add("hidden");
+            resetRequestNewEl.classList.remove("hidden");
+            resetRequestNewEl.focus();
+        }
+    } finally {
+        submit.disabled = false;
+    }
+});
+
+resetRequestNewEl.addEventListener("click", () => {
+    pendingResetToken = "";
+    showAuthCard("forgot");
+    setFeedback(forgotFeedbackEl, "");
+    document.getElementById("forgot-email").focus();
+});
+
+changeEmailFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const emailInput = document.getElementById("change-email-new");
+    const passwordInput = document.getElementById("change-email-password");
+    if (!emailInput.value.trim() || !emailInput.checkValidity()) {
+        setFeedback(changeEmailFeedbackEl, "Enter a valid email address.", true);
+        emailInput.focus();
+        return;
+    }
+    if (!passwordInput.value) {
+        setFeedback(changeEmailFeedbackEl, "Enter your current password.", true);
+        passwordInput.focus();
+        return;
+    }
+
+    const submit = changeEmailFormEl.querySelector("button");
+    submit.disabled = true;
+    try {
+        const profile = await api("/api/account/profile", {
+            method: "PATCH",
+            body: JSON.stringify({email: emailInput.value.trim(), current_password: passwordInput.value}),
+        });
+        changeEmailFormEl.reset();
+        setProfile(profile);
+        setFeedback(changeEmailFeedbackEl, `Confirmation link sent to ${profile.pending_email}. Your email changes when you open it.`);
+    } catch (error) {
+        setFeedback(changeEmailFeedbackEl, retryHint(error), true);
+    } finally {
+        submit.disabled = false;
+    }
+});
+
+settingsFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = settingsFormEl.querySelector("button");
+    submit.disabled = true;
+    try {
+        const settings = await api("/api/account/settings", {
+            method: "PATCH",
+            body: JSON.stringify({timezone: settingsTimezoneEl.value}),
+        });
+        userTimezone = settings.timezone;
+        setFeedback(settingsFeedbackEl, `Settings saved. Times are shown in ${userTimezone}.`);
+    } catch (error) {
+        setFeedback(settingsFeedbackEl, error.message, true);
+    } finally {
+        submit.disabled = false;
+    }
+});
+
+changePasswordButtonEl.addEventListener("click", async () => {
+    if (await openChangePasswordDialog()) {
+        setStatus("Password changed. Other devices have been signed out.");
+    }
 });
 
 searchNotesFormEl.addEventListener("submit", (event) => {

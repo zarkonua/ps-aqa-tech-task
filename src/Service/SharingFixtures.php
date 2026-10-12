@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service;
 
+use App\Entity\AccountToken;
 use App\Entity\AuditEvent;
 use App\Entity\Category;
 use App\Entity\Note;
@@ -22,10 +23,11 @@ use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
  */
 final class SharingFixtures
 {
-    public const VERSION = 3;
+    public const VERSION = 4;
     public const SEARCH_NOTES = 60;
     public const DEFAULT_PASSWORD = 'Fixture-Passw0rd!';
-    public const PERSONAS = ['owner', 'viewer', 'editor', 'unrelated'];
+    /** "unverified" signed up but never confirmed the email; all others can sign in. */
+    public const PERSONAS = ['owner', 'viewer', 'editor', 'unrelated', 'unverified'];
 
     private const RUN_ID_PATTERN = '/^[a-z0-9][a-z0-9-]{0,31}$/D';
     private const NOTES = [
@@ -80,6 +82,7 @@ final class SharingFixtures
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
         private readonly UserPasswordHasherInterface $passwordHasher,
+        private readonly Throttle $throttle,
     ) {
     }
 
@@ -92,16 +95,28 @@ final class SharingFixtures
     {
         $this->purge($runId);
 
-        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => []];
+        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => []];
 
         $users = [];
         foreach (self::PERSONAS as $persona) {
-            $user = (new User())->setEmail(self::email($runId, $persona))->setIsVerified(true);
+            $user = (new User())->setEmail(self::email($runId, $persona))->setIsVerified('unverified' !== $persona);
             self::forceId($user, self::id($runId, 'user', $persona));
             $user->setPasswordHash($this->passwordHasher->hashPassword($user, $password));
             $this->entityManager->persist($user);
             $users[$persona] = $user;
             $manifest['users'][$persona] = ['id' => $user->getId(), 'email' => $user->getEmail()];
+        }
+
+        // Password reset links that must be refused: one past its expiry, one already used.
+        // No working link is ever seeded.
+        foreach (['expired' => ['-1 day', null], 'used' => ['+1 day', '-1 hour']] as $state => [$expires, $used]) {
+            $plainToken = hash('sha256', sprintf('sharing-fixtures/%s/reset-token/%s', $runId, $state));
+            $token = new AccountToken($users['unrelated'], AccountToken::PASSWORD_RESET, $plainToken, new \DateTimeImmutable($expires));
+            if (null !== $used) {
+                $token->markUsed(new \DateTimeImmutable($used));
+            }
+            $this->entityManager->persist($token);
+            $manifest['reset_tokens'][$state] = ['token' => $plainToken, 'email' => $users['unrelated']->getEmail()];
         }
 
         $items = [];
@@ -216,15 +231,20 @@ final class SharingFixtures
     {
         self::assertValidRunId($runId);
 
-        // Personas are found by their reserved email addresses, whatever their IDs are.
+        // Personas are found by their reserved email address or their fixture ID:
+        // a test may have changed either one (email change), but not both.
         $emails = array_map(static fn (string $persona): string => self::email($runId, $persona), self::PERSONAS);
+        $fixtureIds = array_map(static fn (string $persona): string => self::id($runId, 'user', $persona), self::PERSONAS);
         $userIds = array_column(
             $this->entityManager->createQueryBuilder()
                 ->select('u.id')->from(User::class, 'u')
-                ->where('u.email IN (:emails)')->setParameter('emails', $emails)
+                ->where('u.email IN (:emails) OR u.id IN (:ids)')
+                ->setParameter('emails', $emails)
+                ->setParameter('ids', $fixtureIds)
                 ->getQuery()->getScalarResult(),
             'id',
         );
+        $this->throttle->forget([...$emails, ...$userIds]);
         if ([] === $userIds) {
             return 0;
         }

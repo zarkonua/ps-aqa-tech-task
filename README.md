@@ -31,6 +31,7 @@ Key features:
 - Notes sharing: share a note with other users as viewer or editor, and see notes shared with you. See [Notes Sharing and RBAC](docs/notes-sharing-rbac.md).
 - Tags and categories: per-user tags and categories, up to 10 tags and one category per note, filter notes by tag. See [Tags and Categories](docs/tags-categories.md).
 - Advanced search: combined filters, date range, stable sorting and totals for the notes list. See [Advanced Search and Sorting](docs/advanced-search-sorting.md).
+- Password reset and account settings: reset by emailed link, change password, change email with confirmation, time zone. See [Password Reset and Account Settings](docs/password-reset-account-settings.md).
 
 ## Tech Stack
 
@@ -68,7 +69,7 @@ This diagram can help you understand the main entities and interactions before t
 
 ## Fixtures
 
-Seed four personas (owner, viewer, editor, unrelated) with private and shared notes, tags and categories, isolated by a run ID:
+Seed five personas (owner, viewer, editor, unrelated, unverified) with private and shared notes, tags and categories, isolated by a run ID:
 
 ```sh
 docker compose run --rm php-cli php bin/console app:fixtures:sharing:seed my-run

@@ -83,6 +83,7 @@ returns 200 and changes nothing.
 | 404 | Note or share missing or not visible; no registered, confirmed user with that email | `{ "error": "User not found." }` |
 | 409 | Note already shared with that user; stale `version` | `{ "error": "Note is already shared with this user." }` |
 | 422 | Missing, null, wrongly typed, too long or unexpected field; bad `role`; bad pagination | `{ "error": "Validation failed.", "violations": [{ "propertyPath": "role", "message": "..." }] }` |
+| 429 | More than 30 share attempts by one user in a minute | `{ "error": "Too many attempts. Try again later.", "retry_after": 42 }` |
 | 500 | Unexpected failure (no internal details are returned) | `{ "error": "Internal server error." }` |
 
 The notes routes keep API Platform's own error format (`detail`, `violations`).
@@ -158,8 +159,9 @@ docker compose run --rm php-cli php bin/console app:fixtures:sharing:purge my-ru
 | viewer | `viewer.<runId>@qa-fixtures.test` | viewer on `shared_1` and `shared_2` |
 | editor | `editor.<runId>@qa-fixtures.test` | editor on `shared_1` |
 | unrelated | `unrelated.<runId>@qa-fixtures.test` | no access |
+| unverified | `unverified.<runId>@qa-fixtures.test` | signed up, email never confirmed; cannot sign in |
 
-All personas are confirmed and share one password (default `Fixture-Passw0rd!`, override with `--password`).
+All personas share one password (default `Fixture-Passw0rd!`, override with `--password`).
 User, note and share IDs are derived from the run ID, so the same run ID always produces the same manifest.
 Seeding again resets the run to its initial state; purging removes its users, notes, shares and audit
 records and nothing else. Seeding is refused in the `prod` environment. Add `--env=test` to target the
@@ -206,8 +208,8 @@ All tests below are API-level and live in `NoteSharingTest` unless noted.
 
 ## Limitations
 
-- No rate limiting (429). `POST .../shares` answers 404 for an unknown email, as specified, which lets a
-  signed-in user test whether an email is registered; a limiter on that route is the missing mitigation.
+- `POST .../shares` answers 404 for an unknown email, as specified, which lets a signed-in user test
+  whether an email is registered. It is limited to 30 attempts per user per minute (429 with `Retry-After`).
 - No browser test suite in this repository; the UI flows were checked manually with a headless browser.
 - Sharing sends no email notification.
 - Notes have no version field: two people saving the same note at once is last-write-wins.

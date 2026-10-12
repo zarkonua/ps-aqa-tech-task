@@ -34,6 +34,14 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\Column(name: 'created_at', type: 'datetime_immutable')]
     private \DateTimeImmutable $createdAt;
 
+    /** IANA time zone the user wants dates shown in. */
+    #[ORM\Column(length: 64, options: ['default' => 'UTC'])]
+    private string $timezone = 'UTC';
+
+    /** Raised whenever the password changes; tokens issued for an older value are rejected. */
+    #[ORM\Column(name: 'token_version', type: 'integer', options: ['default' => 0])]
+    private int $tokenVersion = 0;
+
     /** @var Collection<int, SignupCode> */
     #[ORM\OneToMany(targetEntity: SignupCode::class, mappedBy: 'user', orphanRemoval: true)]
     private Collection $signupCodes;
@@ -104,6 +112,33 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     public function getCreatedAt(): \DateTimeImmutable
     {
         return $this->createdAt;
+    }
+
+    public function getTimezone(): string
+    {
+        return $this->timezone;
+    }
+
+    public function setTimezone(string $timezone): self
+    {
+        $this->timezone = $timezone;
+
+        return $this;
+    }
+
+    public function getTokenVersion(): int
+    {
+        return $this->tokenVersion;
+    }
+
+    /**
+     * Signs the user out everywhere: every JWT issued so far stops working.
+     */
+    public function invalidateTokens(): self
+    {
+        ++$this->tokenVersion;
+
+        return $this;
     }
 
     public function getUserIdentifier(): string

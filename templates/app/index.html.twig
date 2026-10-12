@@ -37,6 +37,33 @@
                         <label>Password <input type="password" id="signin-password" required></label>
                         <button type="submit">Sign In</button>
                     </form>
+                    <button id="forgot-password-button" class="link-button" type="button">Forgot password?</button>
+                </article>
+
+                <article id="forgot-password-card" class="panel auth-card hidden">
+                    <h2>Forgot Password</h2>
+                    <form id="forgot-password-form" novalidate>
+                        <label>Email <input type="email" id="forgot-email" autocomplete="email" required></label>
+                        <button type="submit">Send reset link</button>
+                    </form>
+                    <p id="forgot-feedback" class="share-feedback" role="alert"></p>
+                    <small>The link is delivered via MailHog SMTP and is valid for 30 minutes.</small>
+                </article>
+
+                <article id="reset-password-card" class="panel auth-card hidden">
+                    <h2>Reset Password</h2>
+                    <form id="reset-password-form" novalidate>
+                        <label>New password
+                            <input type="password" id="reset-password" autocomplete="new-password" minlength="12" maxlength="128" required aria-describedby="reset-hint">
+                        </label>
+                        <label>Repeat new password
+                            <input type="password" id="reset-password-repeat" autocomplete="new-password" required>
+                        </label>
+                        <button type="submit">Set new password</button>
+                    </form>
+                    <p id="reset-feedback" class="share-feedback" role="alert"></p>
+                    <button id="reset-request-new" class="secondary hidden" type="button">Request a new link</button>
+                    <small id="reset-hint">12 to 128 characters.</small>
                 </article>
             </div>
         </section>
@@ -146,10 +173,36 @@
             </div>
 
             <div id="profile-view" class="hidden">
-                <div class="panel profile-card">
-                    <h2>Profile</h2>
-                    <p><strong>Email:</strong> <span id="profile-email">-</span></p>
-                    <p><strong>User ID:</strong> <span id="profile-id">-</span></p>
+                <div class="dashboard-grid taxonomy-grid">
+                    <div class="panel profile-card">
+                        <h2>Profile</h2>
+                        <p><strong>Email:</strong> <span id="profile-email">-</span></p>
+                        <p id="profile-pending" class="share-empty hidden">Waiting for confirmation of <strong id="profile-pending-email"></strong>. Open the link sent to that address.</p>
+                        <p><strong>User ID:</strong> <span id="profile-id">-</span></p>
+
+                        <h3>Change email</h3>
+                        <form id="change-email-form" class="modal-form" novalidate>
+                            <label>New email <input type="email" id="change-email-new" autocomplete="email" maxlength="190" required></label>
+                            <label>Current password <input type="password" id="change-email-password" autocomplete="current-password" required></label>
+                            <button type="submit">Send confirmation link</button>
+                        </form>
+                        <p id="change-email-feedback" class="share-feedback" role="alert"></p>
+                    </div>
+
+                    <div class="panel profile-card">
+                        <h2>Settings</h2>
+                        <form id="settings-form" class="modal-form" novalidate>
+                            <label>Time zone
+                                <select id="settings-timezone"></select>
+                            </label>
+                            <button type="submit">Save settings</button>
+                        </form>
+                        <p id="settings-feedback" class="share-feedback" role="alert" aria-live="polite"></p>
+
+                        <h3>Password</h3>
+                        <p class="share-empty">Changing the password signs you out on every other device.</p>
+                        <button id="change-password-button" class="secondary" type="button">Change password</button>
+                    </div>
                 </div>
             </div>
         </section>

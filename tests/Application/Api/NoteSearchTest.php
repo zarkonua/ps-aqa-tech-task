@@ -139,11 +139,11 @@ final class NoteSearchTest extends ApiTestCase
         yield 'date-time without offset' => ['updatedFrom=2026-03-02T12:00:00', 400];
         yield 'empty date' => ['updatedFrom=', 400];
         yield 'date as list' => ['updatedFrom[]=2026-03-02', 400];
-        yield 'date with trailing text' => ['updatedFrom='.'2026-03-02%0A', 400];
+        yield 'date with trailing text' => ['updatedFrom=2026-03-02%0A', 400];
         yield 'inverted range' => ['updatedFrom=2026-03-03&updatedTo=2026-03-02', 422];
         yield 'inverted range by a second' => ['updatedFrom=2026-03-02T12:00:01Z&updatedTo=2026-03-02T12:00:00Z', 422];
         yield 'unknown sort' => ['sortBy=owner', 400];
-        yield 'sort injection' => ['sortBy='.'title;DROP%20TABLE%20notes', 400];
+        yield 'sort injection' => ['sortBy=title;DROP%20TABLE%20notes', 400];
         yield 'sort wrong case' => ['sortBy=updatedat', 400];
         yield 'unknown order' => ['sortBy=title&order=up', 400];
         yield 'order as list' => ['order[]=asc', 400];

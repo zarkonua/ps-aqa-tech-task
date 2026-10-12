@@ -41,6 +41,8 @@ security:
         - { path: ^/api/auth/signin$, roles: PUBLIC_ACCESS }
         - { path: ^/api/auth/signup$, roles: PUBLIC_ACCESS }
         - { path: ^/api/auth/confirm$, roles: PUBLIC_ACCESS }
+        - { path: ^/api/auth/password-reset/, roles: PUBLIC_ACCESS }
+        - { path: ^/api/account/email/confirm$, roles: PUBLIC_ACCESS }
         - { path: ^/api/auth/me$, roles: ROLE_USER }
         - { path: ^/api/doc, roles: PUBLIC_ACCESS }
         - { path: ^/api/doc.json, roles: PUBLIC_ACCESS }

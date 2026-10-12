@@ -20,6 +20,10 @@ use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
  */
 abstract class ApiTestCase extends WebTestCase
 {
+    protected const PASSWORD = 'Test-Passw0rd-1!';
+
+    private static ?string $passwordHash = null;
+
     protected KernelBrowser $client;
     protected string $runId;
 
@@ -78,6 +82,8 @@ abstract class ApiTestCase extends WebTestCase
             ->where('a.actorId IN (:ids) OR a.targetUserId IN (:ids)')->setParameter('ids', $ids)->getQuery()->execute();
         $em->createQueryBuilder()->delete(User::class, 'u')
             ->where('u.id IN (:ids)')->setParameter('ids', $ids)->getQuery()->execute();
+        // All tests come from the same address, so rate-limit counters must not leak between them.
+        $em->getConnection()->executeStatement('DELETE FROM throttle_hits');
 
         parent::tearDown();
     }
@@ -94,7 +100,10 @@ abstract class ApiTestCase extends WebTestCase
 
     protected function createUser(string $persona, bool $verified = true): User
     {
-        $user = (new User())->setEmail($this->email($persona))->setPasswordHash('not-a-usable-hash')->setIsVerified($verified);
+        $user = (new User())->setEmail($this->email($persona))->setIsVerified($verified);
+        // Hashed once: every test user signs in with the same password.
+        self::$passwordHash ??= $this->client->getContainer()->get('security.user_password_hasher')->hashPassword($user, self::PASSWORD);
+        $user->setPasswordHash(self::$passwordHash);
         $this->em()->persist($user);
         $this->em()->flush();
         $this->userIds[$persona] = (string) $user->getId();
