@@ -142,6 +142,25 @@
                             </div>
                         </div>
 
+                        <div id="bulk-bar" class="bulk-bar">
+                            <label class="color-toggle"><input type="checkbox" id="bulk-select-page"> Select page</label>
+                            <span id="bulk-count" aria-live="polite">0 selected</span>
+                            <div id="bulk-actions" class="bulk-actions hidden" role="group" aria-label="Actions for selected notes">
+                                <label>Category for selected
+                                    <select id="bulk-category"><option value="">No category</option></select>
+                                </label>
+                                <button id="bulk-set-category" class="secondary" type="button">Set category</button>
+                                <label>Tag for selected
+                                    <select id="bulk-tag"></select>
+                                </label>
+                                <button id="bulk-add-tag" class="secondary" type="button">Add tag</button>
+                                <button id="bulk-remove-tag" class="secondary" type="button">Remove tag</button>
+                                <button id="bulk-delete" class="danger" type="button">Delete selected</button>
+                                <button id="bulk-clear" class="secondary" type="button">Clear selection</button>
+                            </div>
+                        </div>
+                        <div id="bulk-report" class="panel notes-error hidden" role="status"></div>
+
                         <div id="notes-list" class="notes-list" aria-live="polite"></div>
                     </section>
                 </div>

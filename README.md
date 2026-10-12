@@ -32,6 +32,7 @@ Key features:
 - Tags and categories: per-user tags and categories, up to 10 tags and one category per note, filter notes by tag. See [Tags and Categories](docs/tags-categories.md).
 - Advanced search: combined filters, date range, stable sorting and totals for the notes list. See [Advanced Search and Sorting](docs/advanced-search-sorting.md).
 - Password reset and account settings: reset by emailed link, change password, change email with confirmation, time zone. See [Password Reset and Account Settings](docs/password-reset-account-settings.md).
+- Bulk operations: set category, add or remove tags, or delete up to 100 notes at once, with per-note results. See [Bulk Operations](docs/bulk-operations.md).
 
 ## Tech Stack
 

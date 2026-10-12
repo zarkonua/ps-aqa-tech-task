@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Controller;
 
-use App\Entity\AuditEvent;
 use App\Entity\Category;
 use App\Entity\Note;
 use App\Entity\Tag;
@@ -12,10 +11,8 @@ use App\Entity\User;
 use App\Repository\NoteRepository;
 use App\Repository\TaxonomyRepository;
 use App\Security\NoteAccess;
-use App\Service\AuditLogger;
+use App\Service\NoteMutator;
 use App\Util\Uuid;
-use Doctrine\DBAL\LockMode;
-use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Attributes as OA;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -37,14 +34,13 @@ use Symfony\Component\Routing\Attribute\Route;
 #[OA\Response(response: Response::HTTP_INTERNAL_SERVER_ERROR, description: 'Internal server error.', content: new OA\JsonContent(ref: '#/components/schemas/ApiError', example: ['error' => 'Internal server error.']))]
 final class NoteTaxonomyController extends ApiController
 {
-    public const MAX_TAGS_PER_NOTE = 10;
+    public const MAX_TAGS_PER_NOTE = NoteMutator::MAX_TAGS_PER_NOTE;
 
     public function __construct(
         private readonly NoteRepository $notes,
         private readonly TaxonomyRepository $taxonomy,
         private readonly NoteAccess $access,
-        private readonly AuditLogger $audit,
-        private readonly EntityManagerInterface $entityManager,
+        private readonly NoteMutator $mutator,
     ) {
     }
 
@@ -98,19 +94,8 @@ final class NoteTaxonomyController extends ApiController
                 return $this->error('Tag not found.', Response::HTTP_NOT_FOUND);
             }
 
-            $this->entityManager->wrapInTransaction(function () use ($note, $tags, $tagIds, $actor): void {
-                // Serializes concurrent replacements, so two of them cannot add up to more than the limit.
-                $this->entityManager->lock($note, LockMode::PESSIMISTIC_WRITE);
-
-                $before = array_map(static fn (Tag $tag): string => $tag->getId(), $note->getTags()->toArray());
-                $note->replaceTags($tags);
-
-                $added = array_values(array_diff($tagIds, $before));
-                $removed = array_values(array_diff($before, $tagIds));
-                if ([] !== $added || [] !== $removed) {
-                    $this->audit->record(AuditEvent::NOTE_TAGS_CHANGED, $actor, (string) $note->getId(), metadata: ['added' => $added, 'removed' => $removed]);
-                }
-            });
+            // At most 10 IDs were accepted above, so the limit cannot be exceeded here.
+            $this->mutator->changeTags($note, $actor, static fn (): array => $tags);
 
             return $this->json(TaxonomyView::ofNote($note));
         });
@@ -152,12 +137,7 @@ final class NoteTaxonomyController extends ApiController
                 }
             }
 
-            $previousId = $note->getCategory()?->getId();
-            if ($previousId !== $category?->getId()) {
-                $note->setCategory($category);
-                $this->audit->record(AuditEvent::NOTE_CATEGORY_CHANGED, $actor, (string) $note->getId(), metadata: ['from' => $previousId, 'to' => $category?->getId()]);
-                $this->entityManager->flush();
-            }
+            $this->mutator->setCategory($note, $actor, $category);
 
             return $this->json(TaxonomyView::ofNote($note));
         });

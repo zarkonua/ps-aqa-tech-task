@@ -23,8 +23,9 @@ use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
  */
 final class SharingFixtures
 {
-    public const VERSION = 4;
+    public const VERSION = 5;
     public const SEARCH_NOTES = 60;
+    public const BULK_NOTES = 105;
     public const DEFAULT_PASSWORD = 'Fixture-Passw0rd!';
     /** "unverified" signed up but never confirmed the email; all others can sign in. */
     public const PERSONAS = ['owner', 'viewer', 'editor', 'unrelated', 'unverified'];
@@ -95,7 +96,7 @@ final class SharingFixtures
     {
         $this->purge($runId);
 
-        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => []];
+        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => []];
 
         $users = [];
         foreach (self::PERSONAS as $persona) {
@@ -162,6 +163,16 @@ final class SharingFixtures
             }
             $timestamps[$definition['id']] = [$definition['created_at'], $definition['updated_at']];
             $manifest['search_notes'][$key] = $definition;
+        }
+
+        // Plain notes of the owner, a few more than one bulk request accepts. All share one timestamp.
+        for ($i = 1; $i <= self::BULK_NOTES; ++$i) {
+            $key = sprintf('bulk_%03d', $i);
+            $note = (new Note())->setOwner($users['owner'])->setTitle(sprintf('[%s] bulk %03d', $runId, $i))->setContent('Bulk fixture note.');
+            self::forceId($note, self::id($runId, 'note', $key));
+            $this->entityManager->persist($note);
+            $timestamps[$note->getId()] = ['2026-01-10T00:00:00+00:00', '2026-01-10T00:00:00+00:00'];
+            $manifest['bulk_notes'][$key] = $note->getId();
         }
 
         $this->entityManager->flush();

@@ -39,6 +39,12 @@ const updatedToEl = document.getElementById("notes-updated-to");
 const activeFiltersEl = document.getElementById("active-filters");
 const activeFilterChipsEl = document.getElementById("active-filter-chips");
 const resetFiltersEl = document.getElementById("notes-reset-filters");
+const bulkSelectPageEl = document.getElementById("bulk-select-page");
+const bulkCountEl = document.getElementById("bulk-count");
+const bulkActionsEl = document.getElementById("bulk-actions");
+const bulkCategoryEl = document.getElementById("bulk-category");
+const bulkTagEl = document.getElementById("bulk-tag");
+const bulkReportEl = document.getElementById("bulk-report");
 const forgotButtonEl = document.getElementById("forgot-password-button");
 const forgotCardEl = document.getElementById("forgot-password-card");
 const forgotFormEl = document.getElementById("forgot-password-form");
@@ -95,6 +101,12 @@ const appDomReady = [
     activeFiltersEl,
     activeFilterChipsEl,
     resetFiltersEl,
+    bulkSelectPageEl,
+    bulkCountEl,
+    bulkActionsEl,
+    bulkCategoryEl,
+    bulkTagEl,
+    bulkReportEl,
     forgotButtonEl,
     forgotCardEl,
     forgotFormEl,
@@ -126,6 +138,9 @@ let hasPrevPage = false;
 let notesRequestId = 0;
 let userTimezone = "UTC";
 let pendingResetToken = "";
+// Selected notes (ID -> title). The selection survives paging, searching and reloading the list.
+const selectedNotes = new Map();
+const BULK_MAX_IDS = 100;
 
 function getToken() {
     return localStorage.getItem(TOKEN_KEY);
@@ -968,6 +983,7 @@ function renderNotes() {
         wrapper.className = "panel note-item";
         wrapper.dataset.role = role;
         wrapper.innerHTML = `
+            <label class="note-select"><input type="checkbox" data-action="select"> <span>Select</span></label>
             <h3>${escapeHtml(note.title || "")}</h3>
             ${sharedBy}
             ${taxonomyChipsHtml(note)}
@@ -1043,8 +1059,126 @@ function renderNotes() {
             }
         });
 
+        const selectBox = wrapper.querySelector('[data-action="select"]');
+        selectBox.checked = selectedNotes.has(note.id);
+        selectBox.setAttribute("aria-label", `Select note ${note.title || ""}`);
+        selectBox.addEventListener("change", () => {
+            if (selectBox.checked) {
+                selectedNotes.set(note.id, note.title || "");
+            } else {
+                selectedNotes.delete(note.id);
+            }
+            renderBulkBar();
+        });
+
         notesListEl.appendChild(wrapper);
     }
+
+    renderBulkBar();
+}
+
+function renderBulkBar() {
+    const onPage = notesCache.filter((note) => selectedNotes.has(note.id)).length;
+    bulkSelectPageEl.disabled = notesCache.length === 0;
+    bulkSelectPageEl.checked = notesCache.length > 0 && onPage === notesCache.length;
+    bulkSelectPageEl.indeterminate = onPage > 0 && onPage < notesCache.length;
+
+    const elsewhere = selectedNotes.size - onPage;
+    bulkCountEl.textContent = `${selectedNotes.size} selected${elsewhere > 0 ? ` (${elsewhere} not on this page)` : ""}`;
+    bulkActionsEl.classList.toggle("hidden", selectedNotes.size === 0);
+}
+
+function clearSelection() {
+    selectedNotes.clear();
+    for (const box of notesListEl.querySelectorAll('[data-action="select"]')) {
+        box.checked = false;
+    }
+    renderBulkBar();
+}
+
+const BULK_VERBS = {setCategory: "updated", addTags: "tagged", removeTags: "untagged", delete: "deleted"};
+
+// Sends one bulk operation (in requests of at most 100 notes) and reports what could not be done.
+async function runBulk(operation, payload, notes) {
+    const ids = Array.from(notes.keys());
+    const succeeded = [];
+    const failed = [];
+    for (const button of bulkActionsEl.querySelectorAll("button")) {
+        button.disabled = true;
+    }
+    bulkReportEl.classList.add("hidden");
+
+    try {
+        for (let start = 0; start < ids.length; start += BULK_MAX_IDS) {
+            const result = await api("/api/notes/bulk", {
+                method: "POST",
+                body: JSON.stringify({operation, ids: ids.slice(start, start + BULK_MAX_IDS), payload}),
+            });
+            succeeded.push(...(Array.isArray(result.succeeded) ? result.succeeded : []));
+            failed.push(...(Array.isArray(result.failed) ? result.failed : []));
+        }
+    } catch (error) {
+        // Nothing is known about the notes of the request that did not come back: keep them selected.
+        const done = new Set([...succeeded, ...failed.map((item) => item.id)]);
+        for (const id of ids) {
+            if (!done.has(id)) {
+                failed.push({id, code: "request_failed", message: retryHint(error)});
+            }
+        }
+    } finally {
+        for (const button of bulkActionsEl.querySelectorAll("button")) {
+            button.disabled = false;
+        }
+    }
+
+    // What failed stays selected, so it can be retried or handled differently.
+    selectedNotes.clear();
+    for (const item of failed) {
+        selectedNotes.set(item.id, notes.get(item.id) ?? "");
+    }
+
+    const summary = `${succeeded.length} of ${ids.length} note${ids.length === 1 ? "" : "s"} ${BULK_VERBS[operation]}.`;
+    setStatus(failed.length === 0 ? summary : `${summary} ${failed.length} failed.`, failed.length > 0);
+    renderBulkReport(operation, payload, notes, failed, summary);
+    await refreshNotes().catch(() => {});
+}
+
+function renderBulkReport(operation, payload, notes, failed, summary) {
+    bulkReportEl.innerHTML = "";
+    bulkReportEl.classList.toggle("hidden", failed.length === 0);
+    if (failed.length === 0) {
+        return;
+    }
+
+    const heading = document.createElement("p");
+    heading.textContent = `${summary} These ${failed.length} could not be ${BULK_VERBS[operation]} and are still selected:`;
+    const list = document.createElement("ul");
+    list.className = "bulk-failures";
+    for (const item of failed.slice(0, 20)) {
+        const entry = document.createElement("li");
+        entry.textContent = `${notes.get(item.id) || item.id}: ${item.message}`;
+        list.appendChild(entry);
+    }
+    if (failed.length > 20) {
+        const more = document.createElement("li");
+        more.textContent = `…and ${failed.length - 20} more.`;
+        list.appendChild(more);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "modal-actions";
+    actions.innerHTML = `
+        <button type="button" class="secondary" data-action="dismiss">Dismiss</button>
+        <button type="button" data-action="retry">Retry failed</button>
+    `;
+    actions.querySelector('[data-action="dismiss"]').addEventListener("click", () => {
+        bulkReportEl.classList.add("hidden");
+    });
+    actions.querySelector('[data-action="retry"]').addEventListener("click", () => {
+        runBulk(operation, payload, new Map(failed.map((item) => [item.id, notes.get(item.id) ?? ""])));
+    });
+
+    bulkReportEl.append(heading, list, actions);
 }
 
 function setProfile(profile) {
@@ -1134,6 +1268,7 @@ async function loadAccountPage() {
 
 // The session is over (password or email changed elsewhere, or the token expired).
 function signOutLocally(message, isError = false) {
+    selectedNotes.clear();
     clearToken();
     notesCache = [];
     notesListEl.innerHTML = "";
@@ -1741,17 +1876,27 @@ function loadTaxonomyPage() {
     return Promise.all(taxonomyPanels.map((panel) => panel.load()));
 }
 
-// Options of the "Tag" filter above the notes list: the signed-in user's own tags.
+// Options of the "Tag" filter above the notes list and of the bulk toolbar: the signed-in user's own taxonomy.
 async function refreshTagFilter() {
     const previous = tagFilterEl.value;
     try {
         const payload = await api("/api/tags?itemsPerPage=100");
+        const categories = await api("/api/categories?itemsPerPage=100");
         tagFilterEl.innerHTML = `<option value="">All tags</option>`;
+        bulkTagEl.innerHTML = "";
+        bulkCategoryEl.innerHTML = `<option value="">No category</option>`;
         for (const tag of Array.isArray(payload?.items) ? payload.items : []) {
             const option = document.createElement("option");
             option.value = tag.id;
             option.textContent = tag.name;
             tagFilterEl.appendChild(option);
+            bulkTagEl.appendChild(option.cloneNode(true));
+        }
+        for (const category of Array.isArray(categories?.items) ? categories.items : []) {
+            const option = document.createElement("option");
+            option.value = category.id;
+            option.textContent = category.name;
+            bulkCategoryEl.appendChild(option);
         }
         tagFilterEl.value = previous;
         if (tagFilterEl.value !== previous) {
@@ -2021,6 +2166,8 @@ createNoteFormEl.addEventListener("submit", async (event) => {
 });
 
 logoutButtonEl.addEventListener("click", () => {
+    selectedNotes.clear();
+    bulkReportEl.classList.add("hidden");
     userTimezone = "UTC";
     clearToken();
     notesCache = [];
@@ -2225,6 +2372,44 @@ for (const dateEl of [updatedFromEl, updatedToEl]) {
     });
 }
 resetFiltersEl.addEventListener("click", resetFilters);
+
+bulkSelectPageEl.addEventListener("change", () => {
+    for (const note of notesCache) {
+        if (bulkSelectPageEl.checked) {
+            selectedNotes.set(note.id, note.title || "");
+        } else {
+            selectedNotes.delete(note.id);
+        }
+    }
+    for (const box of notesListEl.querySelectorAll('[data-action="select"]')) {
+        box.checked = bulkSelectPageEl.checked;
+    }
+    renderBulkBar();
+});
+document.getElementById("bulk-clear").addEventListener("click", clearSelection);
+document.getElementById("bulk-set-category").addEventListener("click", () => {
+    runBulk("setCategory", {category_id: bulkCategoryEl.value || null}, new Map(selectedNotes));
+});
+for (const [buttonId, operation] of [["bulk-add-tag", "addTags"], ["bulk-remove-tag", "removeTags"]]) {
+    document.getElementById(buttonId).addEventListener("click", () => {
+        if (!bulkTagEl.value) {
+            setStatus("Create a tag on the Tags page first.", true);
+            return;
+        }
+        runBulk(operation, {tag_ids: [bulkTagEl.value]}, new Map(selectedNotes));
+    });
+}
+document.getElementById("bulk-delete").addEventListener("click", async () => {
+    const notes = new Map(selectedNotes);
+    const confirmed = await openConfirmModal({
+        title: "Delete notes",
+        message: `Delete ${notes.size} selected note${notes.size === 1 ? "" : "s"}? This cannot be undone. Notes you do not own are skipped.`,
+        confirmLabel: `Delete ${notes.size}`,
+    });
+    if (confirmed) {
+        runBulk("delete", {}, notes);
+    }
+});
 prevPageEl.addEventListener("click", () => {
     if (currentPage > 1) {
         currentPage -= 1;
