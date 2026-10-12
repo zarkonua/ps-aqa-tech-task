@@ -30,13 +30,13 @@ use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
  */
 final class SharingFixtures
 {
-    public const VERSION = 9;
+    public const VERSION = 10;
     public const TASKS = 20;
     public const SEARCH_NOTES = 60;
     public const BULK_NOTES = 105;
     public const DEFAULT_PASSWORD = 'Fixture-Passw0rd!';
-    /** "unverified" signed up but never confirmed the email; all others can sign in. */
-    public const PERSONAS = ['owner', 'viewer', 'editor', 'unrelated', 'unverified'];
+    /** "unverified" signed up but never confirmed the email; "admin" may read the full audit feed. */
+    public const PERSONAS = ['owner', 'viewer', 'editor', 'unrelated', 'unverified', 'admin'];
 
     private const RUN_ID_PATTERN = '/^[a-z0-9][a-z0-9-]{0,31}$/D';
     private const NOTES = [
@@ -113,11 +113,11 @@ final class SharingFixtures
     {
         $this->purge($runId);
 
-        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => [], 'tasks' => [], 'notifications' => []];
+        $manifest = ['version' => self::VERSION, 'run_id' => $runId, 'password' => $password, 'users' => [], 'reset_tokens' => [], 'tags' => [], 'categories' => [], 'notes' => [], 'search_notes' => [], 'bulk_notes' => [], 'tasks' => [], 'notifications' => [], 'audit_events' => []];
 
         $users = [];
         foreach (self::PERSONAS as $persona) {
-            $user = (new User())->setEmail(self::email($runId, $persona))->setIsVerified('unverified' !== $persona);
+            $user = (new User())->setEmail(self::email($runId, $persona))->setIsVerified('unverified' !== $persona)->setIsAdmin('admin' === $persona);
             self::forceId($user, self::id($runId, 'user', $persona));
             $user->setPasswordHash($this->passwordHasher->hashPassword($user, $password));
             $this->entityManager->persist($user);
@@ -255,6 +255,28 @@ final class SharingFixtures
                 'due_at' => $dueAt?->format(\DATE_ATOM),
             ];
         }
+
+        // Audit records as the API would have written them: the life of "shared_1", a note that was
+        // created and deleted again (it exists only in the audit log), and one event of an outsider.
+        $deletedNoteId = self::id($runId, 'note', 'deleted_1');
+        $sharedId = $manifest['notes']['shared_1']['id'];
+        $auditEvents = [
+            [AuditEvent::NOTE_CREATED, 'owner', $sharedId, null, null, ['title' => ['length_after' => 30], 'content' => ['length_after' => 60], 'version' => 1]],
+            [AuditEvent::SHARE_GRANTED, 'owner', $sharedId, $manifest['notes']['shared_1']['shares']['viewer']['id'], 'viewer', ['role' => 'viewer']],
+            [AuditEvent::SHARE_GRANTED, 'owner', $sharedId, $manifest['notes']['shared_1']['shares']['editor']['id'], 'editor', ['role' => 'editor']],
+            [AuditEvent::NOTE_UPDATED, 'editor', $sharedId, null, null, ['changed' => ['title', 'content'], 'title' => ['length_before' => 30, 'length_after' => 18], 'content' => ['length_before' => 60, 'length_after' => 72], 'version' => 2]],
+            [AuditEvent::NOTE_UPDATED, 'owner', $sharedId, null, null, ['changed' => ['content'], 'content' => ['length_before' => 72, 'length_after' => 44], 'version' => 3]],
+            [AuditEvent::NOTE_CREATED, 'owner', $deletedNoteId, null, null, ['title' => ['length_after' => 12], 'content' => ['length_after' => 20], 'version' => 1]],
+            [AuditEvent::NOTE_DELETED, 'owner', $deletedNoteId, null, null, []],
+            [AuditEvent::TAG_CREATED, 'unrelated', null, null, null, []],
+        ];
+        foreach ($auditEvents as $index => [$type, $actorPersona, $noteId, $shareId, $targetPersona, $metadata]) {
+            $event = new AuditEvent($type, $users[$actorPersona]->getId(), $noteId, $shareId, null === $targetPersona ? null : $users[$targetPersona]->getId(), $metadata, sprintf('fixture-%s-%02d', $runId, $index));
+            self::forceId($event, self::id($runId, 'audit', (string) $index));
+            $this->entityManager->persist($event);
+            $manifest['audit_events'][] = ['id' => $event->getId(), 'type' => $type, 'actor' => $actorPersona, 'note_id' => $noteId, 'correlation_id' => $event->getCorrelationId()];
+        }
+        $manifest['deleted_note_id'] = $deletedNoteId;
 
         // Notifications as the API would have created them: unread and read ones, about notes and tasks.
         $notifications = [

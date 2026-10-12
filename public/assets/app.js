@@ -4,6 +4,7 @@ const PATH_PROFILE = "/account/profile";
 const PATH_SHARED = "/account/shared";
 const PATH_TAGS = "/account/tags";
 const PATH_TASKS = "/account/tasks";
+const PATH_AUDIT = "/account/audit";
 const MAX_TAGS_PER_NOTE = 10;
 const ROLE_LABELS = {owner: "Owner", editor: "Editor", viewer: "Viewer"};
 
@@ -34,6 +35,8 @@ const navSharedButtonEl = document.getElementById("nav-shared-button");
 const navTagsButtonEl = document.getElementById("nav-tags-button");
 const taxonomyView = document.getElementById("taxonomy-view");
 const navTasksButtonEl = document.getElementById("nav-tasks-button");
+const navAuditButtonEl = document.getElementById("nav-audit-button");
+const auditView = document.getElementById("audit-view");
 const tasksView = document.getElementById("tasks-view");
 const tasksBoardEl = document.getElementById("tasks-board");
 const tasksFeedbackEl = document.getElementById("tasks-feedback");
@@ -104,6 +107,8 @@ const appDomReady = [
     navTagsButtonEl,
     taxonomyView,
     navTasksButtonEl,
+    navAuditButtonEl,
+    auditView,
     tasksView,
     tasksBoardEl,
     tasksFeedbackEl,
@@ -320,7 +325,7 @@ function showAuthUI() {
 }
 
 function accountPathFor(path) {
-    return [PATH_PROFILE, PATH_SHARED, PATH_TAGS, PATH_TASKS].includes(path) ? path : PATH_NOTES;
+    return [PATH_PROFILE, PATH_SHARED, PATH_TAGS, PATH_TASKS, PATH_AUDIT].includes(path) ? path : PATH_NOTES;
 }
 
 function isSharedView() {
@@ -337,6 +342,7 @@ function setActiveNav(path) {
         [navSharedButtonEl, PATH_SHARED],
         [navTagsButtonEl, PATH_TAGS],
         [navTasksButtonEl, PATH_TASKS],
+        [navAuditButtonEl, PATH_AUDIT],
         [navProfileButtonEl, PATH_PROFILE],
     ];
     for (const [button, buttonPath] of buttons) {
@@ -360,8 +366,10 @@ function showAccountView(path) {
     const isShared = path === PATH_SHARED;
     const isTags = path === PATH_TAGS;
     const isTasks = path === PATH_TASKS;
+    const isAudit = path === PATH_AUDIT;
     tasksView.classList.toggle("hidden", !isTasks);
-    notesView.classList.toggle("hidden", isProfile || isTags || isTasks);
+    auditView.classList.toggle("hidden", !isAudit);
+    notesView.classList.toggle("hidden", isProfile || isTags || isTasks || isAudit);
     profileView.classList.toggle("hidden", !isProfile);
     taxonomyView.classList.toggle("hidden", !isTags);
     createNoteSectionEl.classList.toggle("hidden", isShared);
@@ -369,7 +377,7 @@ function showAccountView(path) {
     tagFilterLabelEl.classList.toggle("hidden", isShared);
     notesDashboardEl.classList.toggle("dashboard-grid--single", isShared);
     notesListHeadingEl.textContent = isShared ? "Shared with me" : "List";
-    accountTitle.textContent = {[PATH_PROFILE]: "Profile", [PATH_SHARED]: "Shared with me", [PATH_TAGS]: "Tags and categories", [PATH_TASKS]: "Tasks"}[path] || "Notes";
+    accountTitle.textContent = {[PATH_PROFILE]: "Profile", [PATH_SHARED]: "Shared with me", [PATH_TAGS]: "Tags and categories", [PATH_TASKS]: "Tasks", [PATH_AUDIT]: "Audit"}[path] || "Notes";
     setActiveNav(path);
 }
 
@@ -1016,6 +1024,7 @@ function renderNotes() {
                 ${canEdit ? `<button class="secondary" data-action="tags">Tags</button>` : ""}
                 <button class="secondary" data-action="files">Files</button>
                 <button class="secondary" data-action="history">History</button>
+                <button class="secondary" data-action="activity">Activity</button>
                 ${role === "owner" ? `<button class="secondary" data-action="share">Share</button>` : ""}
                 ${role === "owner" ? `<button class="danger" data-action="delete">Delete</button>` : ""}
             </div>
@@ -1049,6 +1058,13 @@ function renderNotes() {
                 await refreshNotes();
             } catch (error) {
                 await handleNoteError(error);
+            }
+        });
+
+        wrapper.querySelector('[data-action="activity"]').addEventListener("click", async () => {
+            const result = await openActivityDialog(note);
+            if (result?.error) {
+                await handleNoteError(result.error);
             }
         });
 
@@ -1308,6 +1324,7 @@ async function loadAccountPage() {
 
 // The session is over (password or email changed elsewhere, or the token expired).
 function signOutLocally(message, isError = false) {
+    navAuditButtonEl.classList.add("hidden");
     setUnreadNotifications(0);
     selectedNotes.clear();
     clearToken();
@@ -2038,6 +2055,172 @@ function openHistoryDialog(note, canEdit) {
         load();
     });
 }
+
+// ----- Audit log -----
+
+// Says what an audit event means, from its type and its summary. The summary never holds the changed text.
+function describeAuditEvent(event) {
+    const details = event.details || {};
+    const target = event.target_user?.email || "a user";
+    const changed = Array.isArray(details.changed) ? details.changed.join(" and ") : "";
+    const texts = {
+        "note.created": "created the note",
+        "note.updated": `changed the ${changed || "note"}${details.version ? ` (revision ${details.version})` : ""}`,
+        "note.deleted": "deleted the note",
+        "note.restored": `restored revision ${details.from_revision ?? "?"}`,
+        "note.tags_changed": `changed the tags (${(details.added || []).length} added, ${(details.removed || []).length} removed)`,
+        "note.category_changed": details.to ? "set the category" : "removed the category",
+        "share.granted": `shared the note with ${target} as ${details.role || "?"}`,
+        "share.role_changed": `changed ${target} from ${details.from || "?"} to ${details.to || "?"}`,
+        "share.revoked": `removed the access of ${target}`,
+        "share.removed_with_note": `access of ${target} ended with the note`,
+        "attachment.uploaded": `attached a file (${details.mime_type || "file"}, ${formatBytes(Number(details.size) || 0)})`,
+        "attachment.deleted": "deleted an attached file",
+    };
+    return texts[event.type] || event.type;
+}
+
+function buildAuditItem(event, withIds) {
+    const item = document.createElement("li");
+    item.className = "timeline-item";
+    item.innerHTML = `<p class="timeline-text"></p><small></small>`;
+    const who = event.actor ? (event.actor.email || "a deleted account") : "The system";
+    item.querySelector(".timeline-text").textContent = `${who} ${describeAuditEvent(event)}`;
+    const parts = [formatTimestamp(event.created_at), event.type];
+    if (withIds) {
+        parts.push(event.note_id ? `note ${event.note_id}` : "no note", event.correlation_id ? `request ${event.correlation_id}` : "");
+    }
+    item.querySelector("small").textContent = parts.filter(Boolean).join(" · ");
+    return item;
+}
+
+// Loads one page of a cursor-paged audit list into a list element and wires "Show older".
+function createAuditPager({listEl, moreButton, feedbackEl, url, withIds, emptyText, onError}) {
+    let cursor = null;
+    async function load(reset) {
+        if (reset) {
+            cursor = null;
+            listEl.innerHTML = `<li class="share-empty">Loading…</li>`;
+            moreButton.classList.add("hidden");
+        }
+        moreButton.disabled = true;
+        setFeedback(feedbackEl, "");
+        try {
+            const address = new URL(url(), window.location.origin);
+            address.searchParams.set("limit", "20");
+            if (cursor) {
+                address.searchParams.set("cursor", cursor);
+            }
+            const page = await api(`${address.pathname}${address.search}`);
+            if (reset) {
+                listEl.innerHTML = "";
+            }
+            const items = Array.isArray(page?.items) ? page.items : [];
+            for (const event of items) {
+                listEl.appendChild(buildAuditItem(event, withIds));
+            }
+            if (listEl.childElementCount === 0) {
+                listEl.innerHTML = `<li class="share-empty"></li>`;
+                listEl.firstElementChild.textContent = emptyText;
+            }
+            cursor = page?.next_cursor || null;
+            moreButton.classList.toggle("hidden", !cursor);
+        } catch (error) {
+            if (onError?.(error)) {
+                return;
+            }
+            if (reset) {
+                listEl.innerHTML = "";
+            }
+            feedbackEl.textContent = "";
+            setFeedback(feedbackEl, `${error.status === 422 || error.status === 403 ? error.message : "Could not load the events."} `, true);
+            const retry = document.createElement("button");
+            retry.type = "button";
+            retry.className = "secondary";
+            retry.textContent = "Retry";
+            retry.addEventListener("click", () => load(reset));
+            feedbackEl.appendChild(retry);
+        } finally {
+            moreButton.disabled = false;
+        }
+    }
+    moreButton.addEventListener("click", () => load(false));
+    return load;
+}
+
+function openActivityDialog(note) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Activity");
+        const body = document.createElement("div");
+        body.className = "modal-form";
+        body.innerHTML = `
+            <p class="modal-message share-note-title"></p>
+            <p class="share-empty">What was done to this note, newest first. The changed text itself is not recorded here; see History for that.</p>
+            <p class="share-feedback" role="alert"></p>
+            <ol class="timeline" aria-live="polite"></ol>
+            <div class="modal-actions">
+                <button type="button" class="secondary hidden" data-action="more">Show older</button>
+                <button type="button" class="secondary" data-action="close">Close</button>
+            </div>
+        `;
+        body.querySelector(".share-note-title").textContent = note.title || "";
+
+        let deactivate = () => {};
+        const close = (result) => {
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+        const load = createAuditPager({
+            listEl: body.querySelector(".timeline"),
+            moreButton: body.querySelector('[data-action="more"]'),
+            feedbackEl: body.querySelector(".share-feedback"),
+            url: () => `/api/notes/${note.id}/activity`,
+            withIds: false,
+            emptyText: "Nothing has been recorded for this note yet.",
+            onError: (error) => {
+                if (error.status === 404 || error.status === 401) {
+                    close(error.status === 404 ? {error} : null);
+                    return true;
+                }
+                return false;
+            },
+        });
+
+        body.querySelector('[data-action="close"]').addEventListener("click", () => close(null));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(null);
+            }
+        });
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, () => close(null));
+        body.querySelector('[data-action="close"]').focus();
+        load(true);
+    });
+}
+
+const loadAuditFeed = appDomReady ? createAuditPager({
+    listEl: document.getElementById("audit-list"),
+    moreButton: document.getElementById("audit-more"),
+    feedbackEl: document.getElementById("audit-feedback"),
+    url: () => {
+        const params = new URLSearchParams();
+        const type = document.getElementById("audit-filter-type").value.trim();
+        const noteId = document.getElementById("audit-filter-note").value.trim();
+        if (type) {
+            params.set("type", type);
+        }
+        if (noteId) {
+            params.set("noteId", noteId);
+        }
+        return `/api/audit-events?${params.toString()}`;
+    },
+    withIds: true,
+    emptyText: "No events match.",
+    onError: (error) => error.status === 401,
+}) : async () => {};
 
 // ----- Notifications -----
 
@@ -3321,6 +3504,13 @@ async function refreshProfile() {
     const me = await api("/api/auth/me");
     setProfile(me);
     await loadSettings();
+    // The Audit page is offered to administrators; the server decides who really gets the feed.
+    try {
+        const profile = await api("/api/account/profile");
+        navAuditButtonEl.classList.toggle("hidden", profile?.is_admin !== true);
+    } catch {
+        navAuditButtonEl.classList.add("hidden");
+    }
 }
 
 async function ensureAuthenticated() {
@@ -3441,6 +3631,8 @@ async function renderRoute() {
         await loadAccountPage();
     } else if (accountPath === PATH_TASKS) {
         await loadTasks();
+    } else if (accountPath === PATH_AUDIT) {
+        await loadAuditFeed(true);
     } else if (accountPath === PATH_TAGS) {
         await loadTaxonomyPage();
     } else if (accountPath !== PATH_PROFILE) {
@@ -3512,6 +3704,7 @@ createNoteFormEl.addEventListener("submit", async (event) => {
 });
 
 logoutButtonEl.addEventListener("click", () => {
+    navAuditButtonEl.classList.add("hidden");
     setUnreadNotifications(0);
     selectedNotes.clear();
     bulkReportEl.classList.add("hidden");
@@ -3545,6 +3738,19 @@ navTagsButtonEl.addEventListener("click", async () => {
     navigateTo(PATH_TAGS);
     showAccountView(PATH_TAGS);
     await loadTaxonomyPage();
+});
+navAuditButtonEl.addEventListener("click", async () => {
+    navigateTo(PATH_AUDIT);
+    showAccountView(PATH_AUDIT);
+    await loadAuditFeed(true);
+});
+document.getElementById("audit-filter-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    loadAuditFeed(true);
+});
+document.getElementById("audit-filter-reset").addEventListener("click", () => {
+    document.getElementById("audit-filter-form").reset();
+    loadAuditFeed(true);
 });
 notificationsButtonEl.addEventListener("click", async () => {
     const destination = await openNotificationsDialog();

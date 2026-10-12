@@ -426,6 +426,32 @@ button:disabled {
     font-weight: 600;
 }
 
+.timeline {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    max-height: 460px;
+    overflow: auto;
+    list-style: none;
+}
+
+.timeline-item {
+    display: grid;
+    gap: 2px;
+    padding: 6px 10px;
+    border-left: 3px solid var(--line);
+}
+
+.timeline-text {
+    overflow-wrap: anywhere;
+}
+
+.timeline-item small {
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
 .badge--count {
     margin: 0 0 0 4px;
     border-color: var(--danger);

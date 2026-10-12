@@ -114,8 +114,9 @@ nelmio_api_doc:
                         message: { type: string, example: 'Password updated.' }
                 AccountProfile:
                     type: object
-                    required: [id, email, pending_email]
+                    required: [id, email, pending_email, is_admin]
                     properties:
+                        is_admin: { type: boolean, description: 'Whether I may read the full audit feed.', example: false }
                         id: { type: string, format: uuid, example: 'f0f04231-8b66-4e5f-9d55-2eead364ea02' }
                         email: { type: string, format: email, example: 'user@example.com' }
                         pending_email: { type: string, format: email, nullable: true, description: 'New address waiting to be confirmed, if any.', example: 'new@example.com' }
@@ -248,6 +249,42 @@ nelmio_api_doc:
                                 task_assigned: { type: boolean, example: false }
                                 task_due: { type: boolean, example: true }
                                 task_completed: { type: boolean, example: true }
+                AuditEvent:
+                    type: object
+                    required: [id, type, actor, target_user, note_id, subject_id, details, correlation_id, created_at]
+                    properties:
+                        id: { type: string, format: uuid }
+                        type: { type: string, description: 'What happened, as "<area>.<action>".', example: 'share.granted' }
+                        actor:
+                            type: object
+                            nullable: true
+                            description: Who did it.
+                            required: [id, email]
+                            properties:
+                                id: { type: string, format: uuid }
+                                email: { type: string, format: email, nullable: true, description: 'null when the account no longer exists.' }
+                        target_user:
+                            type: object
+                            nullable: true
+                            description: 'The user it was done to, e.g. who a note was shared with.'
+                            required: [id, email]
+                            properties:
+                                id: { type: string, format: uuid }
+                                email: { type: string, format: email, nullable: true }
+                        note_id: { type: string, format: uuid, nullable: true }
+                        subject_id: { type: string, format: uuid, nullable: true, description: 'ID of the share, tag, category, attachment or task concerned.' }
+                        details: { type: object, description: 'Summary of the change: field names, lengths, roles, statuses. Never the changed text, and never credentials.', example: { changed: [content], content: { length_before: 120, length_after: 164 }, version: 3 } }
+                        correlation_id: { type: string, nullable: true, description: 'X-Correlation-ID of the request that caused it.', example: 'c2a4b2c4-6f0e-4b53-9f0a-2d6b3a9c7e10' }
+                        created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                AuditEventPage:
+                    type: object
+                    required: [items, next_cursor, limit]
+                    properties:
+                        items:
+                            type: array
+                            items: { $ref: '#/components/schemas/AuditEvent' }
+                        next_cursor: { type: string, nullable: true, description: 'Send as "cursor" to get the next (older) page; null on the last page.', example: 'MTc5MTgwMDAwMHw4YTdiNmM1ZC00ZTNmLTRhMmItOWMxZC0wZTlmOGE3YjZjNWQ' }
+                        limit: { type: integer, example: 20 }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]

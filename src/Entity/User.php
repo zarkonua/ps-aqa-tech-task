@@ -38,6 +38,10 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\Column(length: 64, options: ['default' => 'UTC'])]
     private string $timezone = 'UTC';
 
+    /** May read the full audit feed. Granted from the command line only. */
+    #[ORM\Column(name: 'is_admin', type: 'boolean', options: ['default' => false])]
+    private bool $isAdmin = false;
+
     /**
      * Notification types the user does not want emails for (type => true). Null: emails for all.
      *
@@ -182,7 +186,19 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
 
     public function getRoles(): array
     {
-        return ['ROLE_USER'];
+        return $this->isAdmin ? ['ROLE_USER', 'ROLE_ADMIN'] : ['ROLE_USER'];
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->isAdmin;
+    }
+
+    public function setIsAdmin(bool $isAdmin): self
+    {
+        $this->isAdmin = $isAdmin;
+
+        return $this;
     }
 
     public function eraseCredentials(): void

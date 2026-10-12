@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Application\Command;
 
+use App\Entity\AuditEvent;
 use App\Entity\Note;
 use App\Entity\NoteAttachment;
 use App\Entity\NoteRevision;
@@ -45,14 +46,15 @@ final class SharingFixturesTest extends KernelTestCase
         $first = $this->seed(self::RUN_A);
         $other = $this->seed(self::RUN_B);
 
-        self::assertSame(['owner', 'viewer', 'editor', 'unrelated', 'unverified'], array_keys($first['users']));
+        self::assertSame(['owner', 'viewer', 'editor', 'unrelated', 'unverified', 'admin'], array_keys($first['users']));
         self::assertSame(['expired', 'used'], array_keys($first['reset_tokens']));
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $first['reset_tokens']['expired']['token']);
         self::assertSame(['private_1', 'private_2', 'shared_1', 'shared_2'], array_keys($first['notes']));
         self::assertSame([], $first['notes']['private_1']['shares']);
         self::assertSame(['viewer' => 'viewer', 'editor' => 'editor'], array_map(static fn (array $share): string => $share['role'], $first['notes']['shared_1']['shares']));
         self::assertSame('owner.'.self::RUN_A.'@qa-fixtures.test', $first['users']['owner']['email']);
-        self::assertSame(9, $first['version']);
+        self::assertSame(10, $first['version']);
+        self::assertCount(8, $first['audit_events']);
         self::assertSame([2, 1], [count(array_filter($first['notifications']['viewer'], static fn (array $n): bool => !$n['read'])), count($first['notifications']['editor']) - 1]);
         self::assertCount(20, $first['tasks']);
         self::assertEquals(['backlog' => 5, 'todo' => 5, 'in_progress' => 5, 'done' => 5], array_count_values(array_column($first['tasks'], 'status')));
@@ -84,6 +86,9 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame($first['notes']['private_1']['title'], $em->find(Note::class, $first['notes']['private_1']['id'])->getTitle());
         self::assertTrue($em->find(User::class, $first['users']['viewer']['id'])->isVerified());
         self::assertFalse($em->find(User::class, $first['users']['unverified']['id'])->isVerified());
+        self::assertSame([true, false], [$em->find(User::class, $first['users']['admin']['id'])->isAdmin(), $em->find(User::class, $first['users']['owner']['id'])->isAdmin()]);
+        self::assertNull($em->find(Note::class, $first['deleted_note_id']));
+        self::assertSame(2, $em->getRepository(AuditEvent::class)->count(['noteId' => $first['deleted_note_id']]));
         self::assertCount(10, $em->find(Note::class, $first['notes']['private_2']['id'])->getTags());
         $searchNote = $em->find(Note::class, $first['search_notes']['search_07']['id']);
         self::assertSame($first['search_notes']['search_07']['updated_at'], $searchNote->getUpdatedAt()->format(\DATE_ATOM));
@@ -108,7 +113,7 @@ final class SharingFixturesTest extends KernelTestCase
 
         $tester = new CommandTester($this->application->find('app:fixtures:sharing:purge'));
         self::assertSame(Command::SUCCESS, $tester->execute(['run-id' => self::RUN_A]));
-        self::assertStringContainsString('Removed 5 persona(s)', $tester->getDisplay());
+        self::assertStringContainsString('Removed 6 persona(s)', $tester->getDisplay());
 
         $em = $this->em();
         self::assertNull($em->find(User::class, $first['users']['owner']['id']));

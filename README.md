@@ -37,6 +37,7 @@ Key features:
 - Version history: every real save of a note is a revision that can be compared and restored; stale saves are refused. See [Notes Version History](docs/notes-version-history.md).
 - Tasks: a kanban board of tasks with priorities, due times, assignees and optional links to notes. See [Tasks and Kanban](docs/tasks-kanban.md).
 - Notifications: in-app notifications (and optional emails) about shares and tasks. See [Notifications](docs/notifications.md).
+- Audit log: an activity timeline per note and a full audit feed for administrators. See [Audit Log](docs/audit-log.md).
 
 ## Tech Stack
 
@@ -74,7 +75,7 @@ This diagram can help you understand the main entities and interactions before t
 
 ## Fixtures
 
-Seed five personas (owner, viewer, editor, unrelated, unverified) with private and shared notes, tags and categories, isolated by a run ID:
+Seed six personas (owner, viewer, editor, unrelated, unverified, admin) with private and shared notes, tags and categories, isolated by a run ID:
 
 ```sh
 docker compose run --rm php-cli php bin/console app:fixtures:sharing:seed my-run

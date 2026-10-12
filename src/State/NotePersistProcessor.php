@@ -7,10 +7,12 @@ namespace App\State;
 use ApiPlatform\Metadata\HttpOperation;
 use ApiPlatform\Metadata\Operation;
 use ApiPlatform\State\ProcessorInterface;
+use App\Entity\AuditEvent;
 use App\Entity\Note;
 use App\Entity\NoteRevision;
 use App\Entity\User;
 use App\EventSubscriber\NoteEtagSubscriber;
+use App\Service\AuditLogger;
 use App\Service\NoteRevisions;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
@@ -29,6 +31,7 @@ final class NotePersistProcessor implements ProcessorInterface
         private readonly NoteRevisions $revisions,
         private readonly RequestStack $requestStack,
         private readonly EntityManagerInterface $entityManager,
+        private readonly AuditLogger $audit,
     ) {
     }
 
@@ -75,7 +78,16 @@ final class NotePersistProcessor implements ProcessorInterface
             return $this->withEtag($this->persistProcessor->process($data, $operation, $uriVariables, $context));
         }
 
-        return $this->entityManager->wrapInTransaction(function () use ($data, $previous, $expected, $user, $operation, $uriVariables, $context): mixed {
+        // What changed, without the text itself: the audit log must not become a copy of private content.
+        $summary = ['changed' => []];
+        foreach (['title' => [$previous->getTitle(), $data->getTitle()], 'content' => [$previous->getContent(), $data->getContent()]] as $field => [$before, $after]) {
+            if ($before !== $after) {
+                $summary['changed'][] = $field;
+                $summary[$field] = ['length_before' => mb_strlen($before), 'length_after' => mb_strlen($after)];
+            }
+        }
+
+        return $this->entityManager->wrapInTransaction(function () use ($data, $previous, $expected, $user, $operation, $uriVariables, $context, $summary): mixed {
             $from = $previous->getVersion();
             while (!$this->revisions->claimNext($previous, $from)) {
                 // Somebody saved in between. With If-Match that is exactly what must not be overwritten;
@@ -89,6 +101,7 @@ final class NotePersistProcessor implements ProcessorInterface
 
             $saved = $this->persistProcessor->process($data, $operation, $uriVariables, $context);
             $this->revisions->record($saved, NoteRevision::UPDATED, $user);
+            $this->audit->record(AuditEvent::NOTE_UPDATED, $user, (string) $saved->getId(), metadata: $summary + ['version' => $saved->getVersion()]);
             $this->entityManager->flush();
 
             return $this->withEtag($saved);
@@ -108,6 +121,7 @@ final class NotePersistProcessor implements ProcessorInterface
         return $this->entityManager->wrapInTransaction(function () use ($note, $user, $operation, $uriVariables, $context): mixed {
             $saved = $this->persistProcessor->process($note, $operation, $uriVariables, $context);
             $this->revisions->record($saved, NoteRevision::CREATED, $user);
+            $this->audit->record(AuditEvent::NOTE_CREATED, $user, (string) $saved->getId(), metadata: ['title' => ['length_after' => mb_strlen($saved->getTitle())], 'content' => ['length_after' => mb_strlen($saved->getContent())], 'version' => 1]);
             $this->entityManager->flush();
 
             return $this->withEtag($saved);

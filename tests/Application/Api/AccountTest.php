@@ -261,10 +261,10 @@ final class AccountTest extends ApiTestCase
         $newEmail = 'renamed.'.$this->email('owner');
 
         self::assertSame(200, $this->api('owner', 'GET', '/api/account/profile'));
-        self::assertSame(['id' => $this->userIds['owner'], 'email' => $this->email('owner'), 'pending_email' => null], $this->json());
+        self::assertSame(['id' => $this->userIds['owner'], 'email' => $this->email('owner'), 'pending_email' => null, 'is_admin' => false], $this->json());
 
         self::assertSame(202, $this->api('owner', 'PATCH', '/api/account/profile', ['email' => ' '.strtoupper($newEmail).' ', 'current_password' => self::PASSWORD]));
-        self::assertSame(['id' => $this->userIds['owner'], 'email' => $this->email('owner'), 'pending_email' => $newEmail], $this->json());
+        self::assertSame(['id' => $this->userIds['owner'], 'email' => $this->email('owner'), 'pending_email' => $newEmail, 'is_admin' => false], $this->json());
         $mail = self::getMailerMessage();
         self::assertEmailAddressContains($mail, 'To', $newEmail);
         self::assertSame(1, preg_match('/email_change_token=([a-f0-9]{64})/', $mail->getTextBody(), $m));
@@ -282,7 +282,7 @@ final class AccountTest extends ApiTestCase
         $newJwt = $this->json()['token'];
         self::assertSame(401, $this->api(null, 'GET', '/api/notes', null, ['Authorization' => 'Bearer '.$oldJwt]));
         self::assertSame(200, $this->api(null, 'GET', '/api/account/profile', null, ['Authorization' => 'Bearer '.$newJwt]));
-        self::assertSame(['email' => $newEmail, 'pending_email' => null], array_diff_key($this->json(), ['id' => 1]));
+        self::assertSame(['email' => $newEmail, 'pending_email' => null, 'is_admin' => false], array_diff_key($this->json(), ['id' => 1]));
         // The notes stayed with the account.
         self::assertSame(200, $this->api(null, 'GET', '/api/notes', null, ['Authorization' => 'Bearer '.$newJwt]));
         self::assertCount(4, $this->json());

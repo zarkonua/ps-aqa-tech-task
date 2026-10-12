@@ -119,7 +119,7 @@ the notes, shares and users they describe. Indexed on `(note_id, created_at)` an
 | `share.removed_with_note` | a shared note is deleted (one per share) | `role` |
 
 Audit records are written in the same transaction as the change. They hold IDs only, no emails or tokens.
-There is no API to read them yet; query the table.
+They can be read through the API described in [Audit Log](audit-log.md).
 
 ### Migration and rollback
 
@@ -160,6 +160,7 @@ docker compose run --rm php-cli php bin/console app:fixtures:sharing:purge my-ru
 | editor | `editor.<runId>@qa-fixtures.test` | editor on `shared_1` |
 | unrelated | `unrelated.<runId>@qa-fixtures.test` | no access |
 | unverified | `unverified.<runId>@qa-fixtures.test` | signed up, email never confirmed; cannot sign in |
+| admin | `admin.<runId>@qa-fixtures.test` | no notes; may read the full audit feed |
 
 All personas share one password (default `Fixture-Passw0rd!`, override with `--password`).
 User, note and share IDs are derived from the run ID, so the same run ID always produces the same manifest.
@@ -213,4 +214,3 @@ All tests below are API-level and live in `NoteSharingTest` unless noted.
 - No browser test suite in this repository; the UI flows were checked manually with a headless browser.
 - Sharing sends no email notification.
 - Notes have no version field: two people saving the same note at once is last-write-wins.
-- Audit records are readable only in the database.

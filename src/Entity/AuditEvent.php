@@ -16,12 +16,15 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Table(name: 'audit_events')]
 #[ORM\Index(name: 'idx_audit_events_note_created', columns: ['note_id', 'created_at'])]
 #[ORM\Index(name: 'idx_audit_events_actor', columns: ['actor_id'])]
+#[ORM\Index(name: 'idx_audit_events_sequence', columns: ['sequence', 'id'])]
 class AuditEvent
 {
     public const SHARE_GRANTED = 'share.granted';
     public const SHARE_ROLE_CHANGED = 'share.role_changed';
     public const SHARE_REVOKED = 'share.revoked';
     public const SHARE_REMOVED_WITH_NOTE = 'share.removed_with_note';
+    public const NOTE_CREATED = 'note.created';
+    public const NOTE_UPDATED = 'note.updated';
     public const NOTE_DELETED = 'note.deleted';
     public const NOTE_RESTORED = 'note.restored';
     public const ATTACHMENT_UPLOADED = 'attachment.uploaded';
@@ -49,6 +52,12 @@ class AuditEvent
     #[ORM\Id]
     #[ORM\Column(type: 'string', length: 36)]
     private string $id;
+
+    /** Microseconds since 1970 when the event was recorded: the order of the audit trail. */
+    #[ORM\Column(type: 'bigint', options: ['default' => 0])]
+    private string $sequence;
+
+    private static int $lastSequence = 0;
 
     #[ORM\Column(name: 'event_type', length: 64)]
     private string $eventType;
@@ -102,11 +111,19 @@ class AuditEvent
         $this->metadata = $metadata;
         $this->correlationId = $correlationId;
         $this->createdAt = new \DateTimeImmutable();
+        // Strictly increasing within a request, so events recorded together keep the order they happened in.
+        self::$lastSequence = max((int) (microtime(true) * 1_000_000), self::$lastSequence + 1);
+        $this->sequence = (string) self::$lastSequence;
     }
 
     public function getId(): string
     {
         return $this->id;
+    }
+
+    public function getSequence(): string
+    {
+        return $this->sequence;
     }
 
     public function getEventType(): string

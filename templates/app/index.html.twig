@@ -76,6 +76,7 @@
                     <button id="nav-shared-button" class="secondary" type="button">Shared with me</button>
                     <button id="nav-tags-button" class="secondary" type="button">Tags</button>
                     <button id="nav-tasks-button" class="secondary" type="button">Tasks</button>
+                    <button id="nav-audit-button" class="secondary hidden" type="button">Audit</button>
                     <button id="nav-profile-button" class="secondary" type="button">Profile</button>
                     <button id="notifications-button" class="secondary" type="button" aria-haspopup="dialog">
                         Notifications <span id="notifications-badge" class="badge badge--count hidden" aria-hidden="true">0</span>
@@ -213,6 +214,25 @@
                             </section>
                         {% endfor %}
                     </div>
+                </section>
+            </div>
+
+            <div id="audit-view" class="hidden">
+                <section class="panel section-card">
+                    <h2>Audit feed</h2>
+                    <form id="audit-filter-form" class="tasks-toolbar" novalidate>
+                        <label>Event type or group
+                            <input type="text" id="audit-filter-type" placeholder="share.granted or share." autocomplete="off">
+                        </label>
+                        <label>Note ID
+                            <input type="text" id="audit-filter-note" autocomplete="off">
+                        </label>
+                        <button type="submit">Apply</button>
+                        <button type="button" id="audit-filter-reset" class="secondary">Reset</button>
+                    </form>
+                    <p id="audit-feedback" class="share-feedback" role="alert"></p>
+                    <ol id="audit-list" class="timeline" aria-live="polite"></ol>
+                    <button id="audit-more" class="secondary hidden" type="button">Show older</button>
                 </section>
             </div>
 

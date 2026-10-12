@@ -21,6 +21,26 @@ final class AuditLogger
     }
 
     /**
+     * Last line of defence: whatever a caller passes, credentials never reach the audit table.
+     *
+     * @param array<string, mixed> $metadata
+     *
+     * @return array<string, mixed>
+     */
+    public static function withoutSecrets(array $metadata): array
+    {
+        foreach ($metadata as $key => $value) {
+            if (1 === preg_match('/pass(word|phrase)?|token|secret|authorization|cookie|jwt|credential/i', (string) $key)) {
+                unset($metadata[$key]);
+            } elseif (is_array($value)) {
+                $metadata[$key] = self::withoutSecrets($value);
+            }
+        }
+
+        return $metadata;
+    }
+
+    /**
      * Queues an audit record; it is written by the caller's flush, in the same
      * transaction as the change it describes.
      *
@@ -36,6 +56,7 @@ final class AuditLogger
         ?string $subjectId = null,
     ): AuditEvent {
         $correlationId = $this->requestStack->getMainRequest()?->attributes->get(CorrelationIdSubscriber::ATTRIBUTE);
+        $metadata = self::withoutSecrets($metadata);
 
         $event = new AuditEvent(
             $eventType,

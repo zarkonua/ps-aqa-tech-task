@@ -321,7 +321,7 @@ final class AccountController extends ApiController
     }
 
     /**
-     * @return array<string, string|null>
+     * @return array<string, string|bool|null>
      */
     private function profileData(User $user): array
     {
@@ -329,6 +329,7 @@ final class AccountController extends ApiController
             'id' => (string) $user->getId(),
             'email' => $user->getEmail(),
             'pending_email' => $this->tokens->findPending($user, AccountToken::EMAIL_CHANGE)?->getPayload(),
+            'is_admin' => $user->isAdmin(),
         ];
     }
 }
