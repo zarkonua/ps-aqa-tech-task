@@ -30,6 +30,10 @@ services:
             - { name: 'api_platform.doctrine.orm.query_extension.collection' }
             - { name: 'api_platform.doctrine.orm.query_extension.item' }
 
+    App\ApiPlatform\NoteTaxonomyFilterExtension:
+        tags:
+            - { name: 'api_platform.doctrine.orm.query_extension.collection' }
+
     # Must run before BrokenModeNoteNormalizer so the role is set in every app mode.
     App\Serializer\NoteRoleNormalizer:
         autoconfigure: false

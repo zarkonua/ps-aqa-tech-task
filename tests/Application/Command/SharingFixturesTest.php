@@ -6,6 +6,7 @@ namespace App\Tests\Application\Command;
 
 use App\Entity\Note;
 use App\Entity\NoteShare;
+use App\Entity\Tag;
 use App\Entity\User;
 use App\Service\SharingFixtures;
 use Doctrine\ORM\EntityManagerInterface;
@@ -45,6 +46,11 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame([], $first['notes']['private_1']['shares']);
         self::assertSame(['viewer' => 'viewer', 'editor' => 'editor'], array_map(static fn (array $share): string => $share['role'], $first['notes']['shared_1']['shares']));
         self::assertSame('owner.'.self::RUN_A.'@qa-fixtures.test', $first['users']['owner']['email']);
+        self::assertSame(2, $first['version']);
+        self::assertCount(11, $first['tags']['owner']);
+        self::assertSame(['WORK', 'Work'], [$first['tags']['editor']['work_upper']['name'], $first['tags']['owner']['work']['name']]);
+        self::assertSame('日本語', $first['tags']['owner']['japanese']['name']);
+        self::assertSame([0, 10, 'projects'], [count($first['notes']['private_1']['tags']), count($first['notes']['private_2']['tags']), $first['notes']['private_2']['category']]);
         self::assertNotSame($first['users']['owner']['id'], $other['users']['owner']['id']);
 
         // Mutate the run, then reseed: same IDs, pristine state.
@@ -58,6 +64,8 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertNotNull($em->find(NoteShare::class, $first['notes']['shared_1']['shares']['viewer']['id']));
         self::assertSame($first['notes']['private_1']['title'], $em->find(Note::class, $first['notes']['private_1']['id'])->getTitle());
         self::assertTrue($em->find(User::class, $first['users']['viewer']['id'])->isVerified());
+        self::assertCount(10, $em->find(Note::class, $first['notes']['private_2']['id'])->getTags());
+        self::assertSame('Personal', $em->find(Note::class, $first['notes']['shared_1']['id'])->getCategory()->getName());
 
         $tester = new CommandTester($this->application->find('app:fixtures:sharing:purge'));
         self::assertSame(Command::SUCCESS, $tester->execute(['run-id' => self::RUN_A]));
@@ -66,6 +74,7 @@ final class SharingFixturesTest extends KernelTestCase
         $em = $this->em();
         self::assertNull($em->find(User::class, $first['users']['owner']['id']));
         self::assertNull($em->find(Note::class, $first['notes']['shared_1']['id']));
+        self::assertNull($em->find(Tag::class, $first['tags']['owner']['work']['id']));
         self::assertNotNull($em->find(Note::class, $other['notes']['shared_1']['id']), 'another run must not be affected');
     }
 

@@ -2,6 +2,8 @@ const TOKEN_KEY = "qa_task_token";
 const PATH_NOTES = "/account/notes";
 const PATH_PROFILE = "/account/profile";
 const PATH_SHARED = "/account/shared";
+const PATH_TAGS = "/account/tags";
+const MAX_TAGS_PER_NOTE = 10;
 const ROLE_LABELS = {owner: "Owner", editor: "Editor", viewer: "Viewer"};
 
 const authSection = document.getElementById("auth-section");
@@ -28,6 +30,10 @@ const logoutButtonEl = document.getElementById("logout-button");
 const navNotesButtonEl = document.getElementById("nav-notes-button");
 const navProfileButtonEl = document.getElementById("nav-profile-button");
 const navSharedButtonEl = document.getElementById("nav-shared-button");
+const navTagsButtonEl = document.getElementById("nav-tags-button");
+const taxonomyView = document.getElementById("taxonomy-view");
+const tagFilterEl = document.getElementById("notes-tag-filter");
+const tagFilterLabelEl = document.getElementById("notes-tag-filter-label");
 const notesDashboardEl = document.getElementById("notes-dashboard");
 const createNoteSectionEl = document.getElementById("create-note-section");
 const notesListHeadingEl = document.getElementById("notes-list-heading");
@@ -60,6 +66,10 @@ const appDomReady = [
     navNotesButtonEl,
     navProfileButtonEl,
     navSharedButtonEl,
+    navTagsButtonEl,
+    taxonomyView,
+    tagFilterEl,
+    tagFilterLabelEl,
     notesDashboardEl,
     createNoteSectionEl,
     notesListHeadingEl,
@@ -221,7 +231,7 @@ function showAuthUI() {
 }
 
 function accountPathFor(path) {
-    return path === PATH_PROFILE || path === PATH_SHARED ? path : PATH_NOTES;
+    return [PATH_PROFILE, PATH_SHARED, PATH_TAGS].includes(path) ? path : PATH_NOTES;
 }
 
 function isSharedView() {
@@ -233,7 +243,12 @@ function isNotesListVisible() {
 }
 
 function setActiveNav(path) {
-    const buttons = [[navNotesButtonEl, PATH_NOTES], [navSharedButtonEl, PATH_SHARED], [navProfileButtonEl, PATH_PROFILE]];
+    const buttons = [
+        [navNotesButtonEl, PATH_NOTES],
+        [navSharedButtonEl, PATH_SHARED],
+        [navTagsButtonEl, PATH_TAGS],
+        [navProfileButtonEl, PATH_PROFILE],
+    ];
     for (const [button, buttonPath] of buttons) {
         const isActive = accountPathFor(path) === buttonPath;
         button.classList.toggle("active-nav", isActive);
@@ -251,12 +266,16 @@ function showAccountView(path) {
 
     const isProfile = path === PATH_PROFILE;
     const isShared = path === PATH_SHARED;
-    notesView.classList.toggle("hidden", isProfile);
+    const isTags = path === PATH_TAGS;
+    notesView.classList.toggle("hidden", isProfile || isTags);
     profileView.classList.toggle("hidden", !isProfile);
+    taxonomyView.classList.toggle("hidden", !isTags);
     createNoteSectionEl.classList.toggle("hidden", isShared);
+    // The tag filter offers the signed-in user's own tags; shared notes carry their owner's.
+    tagFilterLabelEl.classList.toggle("hidden", isShared);
     notesDashboardEl.classList.toggle("dashboard-grid--single", isShared);
     notesListHeadingEl.textContent = isShared ? "Shared with me" : "List";
-    accountTitle.textContent = isProfile ? "Profile" : (isShared ? "Shared with me" : "Notes");
+    accountTitle.textContent = {[PATH_PROFILE]: "Profile", [PATH_SHARED]: "Shared with me", [PATH_TAGS]: "Tags and categories"}[path] || "Notes";
     setActiveNav(path);
 }
 
@@ -714,6 +733,8 @@ function buildNotesSearchParams() {
 
     if (isSharedView()) {
         params.set("scope", "shared");
+    } else if (tagFilterEl.value) {
+        params.set("tagIds", tagFilterEl.value);
     }
 
     params.set("page", String(currentPage));
@@ -752,10 +773,12 @@ function renderNotes() {
         wrapper.innerHTML = `
             <h3>${escapeHtml(note.title || "")}</h3>
             ${sharedBy}
+            ${taxonomyChipsHtml(note)}
             <p>${escapeHtml(note.content || "")}</p>
             <small>Updated: ${escapeHtml(note.updated_at || "-")}</small>
             <div class="note-actions">
                 ${canEdit ? `<button data-action="edit">Update</button>` : ""}
+                ${canEdit ? `<button class="secondary" data-action="tags">Tags</button>` : ""}
                 ${role === "owner" ? `<button class="secondary" data-action="share">Share</button>` : ""}
                 ${role === "owner" ? `<button class="danger" data-action="delete">Delete</button>` : ""}
             </div>
@@ -794,6 +817,16 @@ function renderNotes() {
             }
         });
 
+        wrapper.querySelector('[data-action="tags"]')?.addEventListener("click", async () => {
+            const result = await openNoteTaxonomyDialog(note);
+            if (result?.error) {
+                await handleNoteError(result.error);
+            } else if (result?.saved) {
+                setStatus("Tags and category updated.");
+                await refreshNotes().catch((error) => setStatus(error.message, true));
+            }
+        });
+
         wrapper.querySelector('[data-action="share"]')?.addEventListener("click", () => {
             openShareDialog(note);
         });
@@ -821,6 +854,535 @@ function setProfile(profile) {
     accountProfile = profile;
     profileEmailEl.textContent = profile?.email ?? "-";
     profileIdEl.textContent = profile?.id ?? "-";
+}
+
+function colorDotHtml(color) {
+    return /^#[0-9a-f]{6}$/i.test(color || "") ? `<span class="color-dot" style="background:${color}"></span>` : "";
+}
+
+function taxonomyChipsHtml(note) {
+    const tags = Array.isArray(note.tags) ? note.tags : [];
+    if (!note.category && tags.length === 0) {
+        return "";
+    }
+
+    const category = note.category
+        ? `<span class="chip chip--category" title="Category">${colorDotHtml(note.category.color)}${escapeHtml(note.category.name || "")}</span>`
+        : "";
+    const chips = tags
+        .map((tag) => `<li class="chip">${colorDotHtml(tag.color)}${escapeHtml(tag.name || "")}</li>`)
+        .join("");
+
+    return `<div class="note-taxonomy">${category}<ul class="chip-list" aria-label="Tags">${chips}</ul></div>`;
+}
+
+// Tags and category of one note: a category dropdown and tag chips with autocomplete.
+// The choices are the note owner's taxonomy, which is what the server accepts.
+function openNoteTaxonomyDialog(note) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Tags and category");
+        const listId = `tag-options-${modalCounter}`;
+
+        const body = document.createElement("form");
+        body.className = "modal-form";
+        body.noValidate = true;
+        body.innerHTML = `
+            <p class="modal-message share-note-title"></p>
+            <div class="taxonomy-dialog-body">
+                <label>Category
+                    <select name="category"><option value="">No category</option></select>
+                </label>
+                <div>
+                    <label>Add a tag
+                        <input type="text" name="tag" autocomplete="off" role="combobox" aria-autocomplete="list"
+                               aria-expanded="false" aria-controls="${listId}" placeholder="Type to search tags">
+                    </label>
+                    <ul id="${listId}" class="tag-options hidden" role="listbox" aria-label="Matching tags"></ul>
+                </div>
+                <ul class="chip-list chip-list--editable" aria-label="Tags on this note"></ul>
+                <p class="share-empty tag-count" aria-live="polite"></p>
+            </div>
+            <p class="share-feedback" role="alert"></p>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="cancel">Cancel</button>
+                <button type="submit">Save</button>
+            </div>
+        `;
+        body.querySelector(".share-note-title").textContent = note.title || "";
+
+        const dialogBody = body.querySelector(".taxonomy-dialog-body");
+        const categorySelect = body.querySelector('select[name="category"]');
+        const tagInput = body.querySelector('input[name="tag"]');
+        const optionsEl = body.querySelector(".tag-options");
+        const chipsEl = body.querySelector(".chip-list--editable");
+        const countEl = body.querySelector(".tag-count");
+        const feedbackEl = body.querySelector(".share-feedback");
+        const saveButton = body.querySelector('button[type="submit"]');
+
+        let available = [];
+        let selected = (Array.isArray(note.tags) ? note.tags : []).map((tag) => ({...tag}));
+        let activeOption = -1;
+        let closed = false;
+        let deactivate = () => {};
+
+        const close = (result) => {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+
+        const setFeedback = (message) => {
+            feedbackEl.textContent = message;
+            feedbackEl.classList.toggle("share-feedback--error", Boolean(message));
+        };
+
+        const matches = () => {
+            const query = tagInput.value.trim().toLowerCase();
+            return available
+                .filter((tag) => !selected.some((chosen) => chosen.id === tag.id))
+                .filter((tag) => !query || tag.name.toLowerCase().includes(query))
+                .slice(0, 8);
+        };
+
+        const hideOptions = () => {
+            optionsEl.classList.add("hidden");
+            tagInput.setAttribute("aria-expanded", "false");
+            tagInput.removeAttribute("aria-activedescendant");
+            activeOption = -1;
+        };
+
+        const renderOptions = () => {
+            const found = matches();
+            optionsEl.innerHTML = "";
+            if (found.length === 0) {
+                const empty = document.createElement("li");
+                empty.className = "tag-option tag-option--empty";
+                empty.textContent = available.length === 0 ? "No tags yet. Create them on the Tags page." : "No matching tags.";
+                optionsEl.appendChild(empty);
+            }
+            found.forEach((tag, index) => {
+                const option = document.createElement("li");
+                option.id = `${listId}-${index}`;
+                option.className = "tag-option";
+                option.setAttribute("role", "option");
+                option.setAttribute("aria-selected", index === activeOption ? "true" : "false");
+                option.innerHTML = `${colorDotHtml(tag.color)}${escapeHtml(tag.name)}`;
+                // mousedown, so the choice is made before the input loses focus.
+                option.addEventListener("mousedown", (event) => {
+                    event.preventDefault();
+                    addTag(tag);
+                });
+                optionsEl.appendChild(option);
+            });
+            optionsEl.classList.remove("hidden");
+            tagInput.setAttribute("aria-expanded", "true");
+            if (activeOption >= 0 && found[activeOption]) {
+                tagInput.setAttribute("aria-activedescendant", `${listId}-${activeOption}`);
+            } else {
+                tagInput.removeAttribute("aria-activedescendant");
+            }
+        };
+
+        const renderChips = () => {
+            chipsEl.innerHTML = "";
+            for (const tag of selected) {
+                const chip = document.createElement("li");
+                chip.className = "chip";
+                chip.innerHTML = `${colorDotHtml(tag.color)}<span></span><button type="button" class="chip-remove">×</button>`;
+                chip.querySelector("span:last-of-type").textContent = tag.name;
+                const removeButton = chip.querySelector("button");
+                removeButton.setAttribute("aria-label", `Remove tag ${tag.name}`);
+                removeButton.addEventListener("click", () => {
+                    selected = selected.filter((chosen) => chosen.id !== tag.id);
+                    renderChips();
+                    tagInput.focus();
+                });
+                chipsEl.appendChild(chip);
+            }
+            countEl.textContent = `${selected.length} of ${MAX_TAGS_PER_NOTE} tags`;
+            tagInput.disabled = selected.length >= MAX_TAGS_PER_NOTE;
+            if (tagInput.disabled) {
+                hideOptions();
+            }
+        };
+
+        function addTag(tag) {
+            if (selected.length >= MAX_TAGS_PER_NOTE) {
+                setFeedback(`A note can have at most ${MAX_TAGS_PER_NOTE} tags.`);
+                return;
+            }
+            setFeedback("");
+            selected.push(tag);
+            tagInput.value = "";
+            activeOption = -1;
+            renderChips();
+            if (!tagInput.disabled) {
+                renderOptions();
+            }
+        }
+
+        tagInput.addEventListener("input", () => {
+            setFeedback("");
+            activeOption = -1;
+            renderOptions();
+        });
+        // The list sits above the buttons. Closing it only after a click has landed
+        // keeps the button under the pointer from moving away mid-click.
+        let hideTimer = 0;
+        tagInput.addEventListener("focus", () => {
+            clearTimeout(hideTimer);
+            renderOptions();
+        });
+        tagInput.addEventListener("blur", () => {
+            hideTimer = setTimeout(hideOptions, 200);
+        });
+        tagInput.addEventListener("keydown", (event) => {
+            const found = matches();
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                if (found.length > 0) {
+                    const step = event.key === "ArrowDown" ? 1 : -1;
+                    activeOption = (activeOption + step + found.length) % found.length;
+                    renderOptions();
+                }
+            } else if (event.key === "Enter") {
+                // Enter picks a tag; it must not submit the form while the list is in use.
+                if (!optionsEl.classList.contains("hidden") && (activeOption >= 0 || tagInput.value.trim())) {
+                    event.preventDefault();
+                    const choice = found[Math.max(activeOption, 0)];
+                    if (choice) {
+                        addTag(choice);
+                    } else {
+                        setFeedback("No tag with this name. Create it on the Tags page first.");
+                    }
+                }
+            } else if (event.key === "Escape" && !optionsEl.classList.contains("hidden")) {
+                event.preventDefault();
+                event.stopPropagation();
+                hideOptions();
+            } else if (event.key === "Backspace" && tagInput.value === "" && selected.length > 0) {
+                selected = selected.slice(0, -1);
+                renderChips();
+            }
+        });
+
+        body.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            setFeedback("");
+            saveButton.disabled = true;
+            try {
+                await api(`/api/notes/${note.id}/tags`, {
+                    method: "PUT",
+                    body: JSON.stringify({tag_ids: selected.map((tag) => tag.id)}),
+                });
+                await api(`/api/notes/${note.id}/category`, {
+                    method: "PUT",
+                    body: JSON.stringify({category_id: categorySelect.value || null}),
+                });
+                close({saved: true});
+            } catch (error) {
+                if (error.status === 403 || (error.status === 404 && error.message === "Note not found.")) {
+                    close({error});
+                    return;
+                }
+                saveButton.disabled = false;
+                // A tag or category was deleted meanwhile: show what is still available.
+                setFeedback(error.status === 404 ? `${error.message} It may have been deleted; the lists were reloaded.` : error.message);
+                if (error.status === 404) {
+                    await load();
+                }
+            }
+        });
+
+        async function load() {
+            dialogBody.setAttribute("aria-busy", "true");
+            saveButton.disabled = true;
+            try {
+                const taxonomy = await api(`/api/notes/${note.id}/taxonomy`);
+                if (closed) {
+                    return;
+                }
+                available = Array.isArray(taxonomy.tags) ? taxonomy.tags : [];
+                selected = selected.filter((chosen) => available.some((tag) => tag.id === chosen.id));
+
+                const wanted = categorySelect.dataset.loaded ? categorySelect.value : (note.category?.id || "");
+                categorySelect.innerHTML = `<option value="">No category</option>`;
+                for (const category of Array.isArray(taxonomy.categories) ? taxonomy.categories : []) {
+                    const option = document.createElement("option");
+                    option.value = category.id;
+                    option.textContent = category.name;
+                    categorySelect.appendChild(option);
+                }
+                categorySelect.value = wanted;
+                categorySelect.dataset.loaded = "1";
+                renderChips();
+                saveButton.disabled = false;
+            } catch (error) {
+                if (closed) {
+                    return;
+                }
+                if (error.status === 403 || error.status === 404) {
+                    close({error});
+                    return;
+                }
+                setFeedback("Could not load tags and categories.");
+                const retry = document.createElement("button");
+                retry.type = "button";
+                retry.className = "secondary";
+                retry.textContent = "Retry";
+                retry.addEventListener("click", () => {
+                    setFeedback("");
+                    load();
+                });
+                feedbackEl.append(" ", retry);
+            } finally {
+                dialogBody.setAttribute("aria-busy", "false");
+            }
+        }
+
+        body.querySelector('[data-action="cancel"]').addEventListener("click", () => close(null));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(null);
+            }
+        });
+
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, () => close(null));
+        renderChips();
+        categorySelect.focus();
+        load();
+    });
+}
+
+function openTaxonomyItemModal(one, item) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell(`Edit ${one}`);
+
+        const form = document.createElement("form");
+        form.className = "modal-form";
+        form.noValidate = true;
+        form.innerHTML = `
+            <label>Name <input type="text" name="name" maxlength="30" autocomplete="off" required></label>
+            <label class="color-toggle"><input type="checkbox" name="use-color"> Color</label>
+            <label class="color-input">Color value <input type="color" name="color"></label>
+            <p class="share-feedback share-feedback--error" role="alert"></p>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="cancel">Cancel</button>
+                <button type="submit">Save</button>
+            </div>
+        `;
+        const nameInput = form.querySelector('input[name="name"]');
+        const useColor = form.querySelector('input[name="use-color"]');
+        const colorInput = form.querySelector('input[name="color"]');
+        nameInput.value = item.name;
+        useColor.checked = Boolean(item.color);
+        colorInput.value = item.color || "#b8743f";
+        colorInput.disabled = !useColor.checked;
+        useColor.addEventListener("change", () => {
+            colorInput.disabled = !useColor.checked;
+        });
+
+        let deactivate = () => {};
+        const close = (result) => {
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            if (!nameInput.value.trim()) {
+                form.querySelector(".share-feedback").textContent = "Enter a name.";
+                nameInput.focus();
+                return;
+            }
+            close({name: nameInput.value, color: useColor.checked ? colorInput.value : null, version: item.version});
+        });
+        form.querySelector('[data-action="cancel"]').addEventListener("click", () => close(null));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(null);
+            }
+        });
+
+        content.appendChild(form);
+        document.body.appendChild(backdrop);
+        deactivate = activateDialog(backdrop, () => close(null));
+        nameInput.focus();
+        nameInput.select();
+    });
+}
+
+// One panel of the "Tags and categories" page: create form plus the list with edit and delete.
+function setupTaxonomyPanel(panel) {
+    const kind = panel.dataset.taxonomy;
+    const one = panel.dataset.one;
+    const url = `/api/${kind}`;
+    const form = panel.querySelector(".taxonomy-form");
+    const nameInput = form.querySelector('input[name="name"]');
+    const useColor = form.querySelector('input[name="use-color"]');
+    const colorInput = form.querySelector('input[name="color"]');
+    const feedbackEl = panel.querySelector(".share-feedback");
+    const listEl = panel.querySelector(".taxonomy-list");
+
+    const setFeedback = (message, isError = false) => {
+        feedbackEl.textContent = message;
+        feedbackEl.classList.toggle("share-feedback--error", Boolean(message) && isError);
+        feedbackEl.classList.toggle("share-feedback--ok", Boolean(message) && !isError);
+        nameInput.setAttribute("aria-invalid", message && isError ? "true" : "false");
+    };
+
+    const render = (items) => {
+        listEl.innerHTML = "";
+        if (items.length === 0) {
+            listEl.innerHTML = `<p class="share-empty">No ${kind} yet.</p>`;
+            return;
+        }
+
+        for (const item of items) {
+            const row = document.createElement("div");
+            row.className = "taxonomy-row";
+            row.innerHTML = `
+                <span class="taxonomy-name">${colorDotHtml(item.color)}<span></span></span>
+                <button type="button" class="secondary" data-action="edit">Edit</button>
+                <button type="button" class="danger" data-action="delete">Delete</button>
+            `;
+            row.querySelector(".taxonomy-name span:last-child").textContent = item.name;
+            const editButton = row.querySelector('[data-action="edit"]');
+            const deleteButton = row.querySelector('[data-action="delete"]');
+            editButton.setAttribute("aria-label", `Edit ${one} ${item.name}`);
+            deleteButton.setAttribute("aria-label", `Delete ${one} ${item.name}`);
+
+            editButton.addEventListener("click", async () => {
+                const changes = await openTaxonomyItemModal(one, item);
+                if (!changes) {
+                    return;
+                }
+                try {
+                    await api(`${url}/${item.id}`, {method: "PATCH", body: JSON.stringify(changes)});
+                    await load();
+                    setFeedback(`Saved ${one} "${changes.name.trim()}".`);
+                } catch (error) {
+                    await load();
+                    setFeedback(error.message, true);
+                }
+            });
+
+            deleteButton.addEventListener("click", async () => {
+                const confirmed = await openConfirmModal({
+                    title: `Delete ${one}`,
+                    message: `Delete ${one} "${item.name}"? Notes that use it are kept and only lose this ${one}.`,
+                    confirmLabel: "Delete",
+                });
+                if (!confirmed) {
+                    return;
+                }
+                try {
+                    await api(`${url}/${item.id}`, {method: "DELETE"});
+                    await load();
+                    setFeedback(`Deleted ${one} "${item.name}".`);
+                } catch (error) {
+                    await load();
+                    setFeedback(error.status === 404 ? `This ${one} was already deleted.` : error.message, true);
+                }
+            });
+
+            listEl.appendChild(row);
+        }
+    };
+
+    async function load() {
+        if (listEl.childElementCount === 0) {
+            listEl.innerHTML = `<p class="share-empty">Loading…</p>`;
+        }
+        listEl.setAttribute("aria-busy", "true");
+        try {
+            const payload = await api(`${url}?itemsPerPage=100`);
+            render(Array.isArray(payload?.items) ? payload.items : []);
+        } catch {
+            listEl.innerHTML = `
+                <p class="share-empty share-feedback--error">Could not load ${kind}.</p>
+                <button type="button" class="secondary" data-action="retry">Retry</button>
+            `;
+            listEl.querySelector('[data-action="retry"]').addEventListener("click", load);
+        } finally {
+            listEl.setAttribute("aria-busy", "false");
+        }
+    }
+
+    useColor.addEventListener("change", () => {
+        colorInput.disabled = !useColor.checked;
+    });
+
+    form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const name = nameInput.value.trim();
+        if (!name) {
+            setFeedback(`Enter a name for the ${one}.`, true);
+            nameInput.focus();
+            return;
+        }
+
+        const submitButton = form.querySelector('button[type="submit"]');
+        submitButton.disabled = true;
+        try {
+            await api(url, {
+                method: "POST",
+                body: JSON.stringify({name, color: useColor.checked ? colorInput.value : null}),
+            });
+            form.reset();
+            colorInput.disabled = true;
+            await load();
+            setFeedback(`Added ${one} "${name}".`);
+        } catch (error) {
+            setFeedback(error.message, true);
+        } finally {
+            submitButton.disabled = false;
+            nameInput.focus();
+        }
+    });
+
+    return {
+        load() {
+            setFeedback("");
+            return load();
+        },
+    };
+}
+
+const taxonomyPanels = appDomReady
+    ? Array.from(taxonomyView.querySelectorAll("[data-taxonomy]")).map(setupTaxonomyPanel)
+    : [];
+
+function loadTaxonomyPage() {
+    return Promise.all(taxonomyPanels.map((panel) => panel.load()));
+}
+
+// Options of the "Tag" filter above the notes list: the signed-in user's own tags.
+async function refreshTagFilter() {
+    const previous = tagFilterEl.value;
+    try {
+        const payload = await api("/api/tags?itemsPerPage=100");
+        tagFilterEl.innerHTML = `<option value="">All tags</option>`;
+        for (const tag of Array.isArray(payload?.items) ? payload.items : []) {
+            const option = document.createElement("option");
+            option.value = tag.id;
+            option.textContent = tag.name;
+            tagFilterEl.appendChild(option);
+        }
+        tagFilterEl.value = previous;
+        if (tagFilterEl.value !== previous) {
+            tagFilterEl.value = "";
+        }
+    } catch {
+        // The list still works without the filter options.
+    }
 }
 
 function renderNotesError() {
@@ -990,9 +1552,12 @@ async function renderRoute() {
     }
 
     showAccountView(accountPath);
-    if (accountPath !== PATH_PROFILE) {
+    if (accountPath === PATH_TAGS) {
+        await loadTaxonomyPage();
+    } else if (accountPath !== PATH_PROFILE) {
         currentPage = 1;
         notesListEl.innerHTML = "";
+        await refreshTagFilter();
         await refreshNotes().catch((error) => setStatus(error.message, true));
     }
 }
@@ -1077,11 +1642,21 @@ async function openNotesList(path) {
     showAccountView(path);
     currentPage = 1;
     notesListEl.innerHTML = "";
+    await refreshTagFilter();
     await refreshNotes().catch((error) => setStatus(error.message, true));
 }
 
 navNotesButtonEl.addEventListener("click", () => openNotesList(PATH_NOTES));
 navSharedButtonEl.addEventListener("click", () => openNotesList(PATH_SHARED));
+navTagsButtonEl.addEventListener("click", async () => {
+    navigateTo(PATH_TAGS);
+    showAccountView(PATH_TAGS);
+    await loadTaxonomyPage();
+});
+tagFilterEl.addEventListener("change", () => {
+    currentPage = 1;
+    refreshNotes().catch((error) => setStatus(error.message, true));
+});
 
 navProfileButtonEl.addEventListener("click", async () => {
     navigateTo(PATH_PROFILE);

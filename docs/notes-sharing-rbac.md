@@ -165,6 +165,8 @@ Seeding again resets the run to its initial state; purging removes its users, no
 records and nothing else. Seeding is refused in the `prod` environment. Add `--env=test` to target the
 test database.
 
+The same run also carries tags and categories; see [Tags and Categories](tags-categories.md#fixtures).
+
 ## Tests
 
 ```sh

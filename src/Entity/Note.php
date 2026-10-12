@@ -17,9 +17,12 @@ use ApiPlatform\Doctrine\Orm\Filter\OrFilter;
 use ApiPlatform\Doctrine\Orm\Filter\PartialSearchFilter;
 use ApiPlatform\Doctrine\Orm\Filter\SortFilter;
 use App\ApiPlatform\NoteAccessExtension;
+use App\ApiPlatform\NoteTaxonomyFilterExtension;
 use App\Repository\NoteRepository;
 use App\State\NotePersistProcessor;
 use App\State\NoteRemoveProcessor;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Serializer\Attribute\Groups;
 use Symfony\Component\Serializer\Attribute\SerializedName;
@@ -46,6 +49,27 @@ use Symfony\Component\Validator\Constraints as Assert;
                     description: 'Which notes to list: "owned" (default), "shared" (shared with me) or "all".',
                     constraints: [new Assert\Choice(choices: NoteAccessExtension::SCOPES, message: 'Scope must be one of: owned, shared, all.')],
                 ),
+                'tagIds' => new QueryParameter(
+                    schema: ['type' => 'string', 'example' => '0b0f6f0e-3c5e-4e63-9f0a-6f2f0d0c1a11,5f1d7a52-6b53-4d0c-8f0e-2d6b3a9c7e10'],
+                    description: 'Comma-separated tag IDs (1 to 10). Only notes carrying these tags are listed; see "tagMatch".',
+                    constraints: [new Assert\Sequentially([
+                        new Assert\Type(type: 'string', message: 'tagIds must be a comma-separated list of tag IDs.'),
+                        new Assert\Regex(pattern: NoteTaxonomyFilterExtension::TAG_IDS_PATTERN, message: 'tagIds must be a comma-separated list of 1 to 10 tag IDs.'),
+                    ])],
+                ),
+                'tagMatch' => new QueryParameter(
+                    schema: ['type' => 'string', 'enum' => NoteTaxonomyFilterExtension::TAG_MATCHES, 'default' => NoteTaxonomyFilterExtension::MATCH_ANY],
+                    description: 'With "tagIds": "any" (default) lists notes having at least one of the tags, "all" lists notes having every tag.',
+                    constraints: [new Assert\Choice(choices: NoteTaxonomyFilterExtension::TAG_MATCHES, message: 'tagMatch must be one of: any, all.')],
+                ),
+                'categoryId' => new QueryParameter(
+                    schema: ['type' => 'string', 'format' => 'uuid'],
+                    description: 'Only notes in this category are listed.',
+                    constraints: [new Assert\Sequentially([
+                        new Assert\Type(type: 'string', message: 'categoryId must be a category ID.'),
+                        new Assert\Regex(pattern: NoteTaxonomyFilterExtension::ID_PATTERN, message: 'categoryId must be a category ID.'),
+                    ])],
+                ),
             ],
         ),
         new Post(uriTemplate: '/api/notes', security: "is_granted('ROLE_USER')", processor: NotePersistProcessor::class),
@@ -63,7 +87,7 @@ use Symfony\Component\Validator\Constraints as Assert;
             processor: NoteRemoveProcessor::class,
         ),
     ],
-    normalizationContext: ['groups' => ['note:read']],
+    normalizationContext: ['groups' => ['note:read'], 'skip_null_values' => false],
     denormalizationContext: ['groups' => ['note:write']],
 )]
 #[ORM\Entity(repositoryClass: NoteRepository::class)]
@@ -120,8 +144,28 @@ class Note
     )]
     private ?string $role = null;
 
+    /** Taken from the note owner's categories. */
+    #[ORM\ManyToOne(targetEntity: Category::class)]
+    #[ORM\JoinColumn(nullable: true, onDelete: 'SET NULL')]
+    #[Groups(['note:read'])]
+    private ?Category $category = null;
+
+    /**
+     * Taken from the note owner's tags.
+     *
+     * @var Collection<int, Tag>
+     */
+    #[ORM\ManyToMany(targetEntity: Tag::class)]
+    #[ORM\JoinTable(name: 'note_tags')]
+    #[ORM\JoinColumn(name: 'note_id', referencedColumnName: 'id', onDelete: 'CASCADE')]
+    #[ORM\InverseJoinColumn(name: 'tag_id', referencedColumnName: 'id', onDelete: 'CASCADE')]
+    #[ORM\OrderBy(['nameKey' => 'ASC'])]
+    #[Groups(['note:read'])]
+    private Collection $tags;
+
     public function __construct()
     {
+        $this->tags = new ArrayCollection();
         $now = new \DateTimeImmutable();
         $this->createdAt = $now;
         $this->updatedAt = $now;
@@ -184,6 +228,61 @@ class Note
     public function setRole(?string $role): self
     {
         $this->role = $role;
+
+        return $this;
+    }
+
+    public function getCategory(): ?Category
+    {
+        return $this->category;
+    }
+
+    public function setCategory(?Category $category): self
+    {
+        $this->category = $category;
+
+        return $this;
+    }
+
+    /**
+     * @return Collection<int, Tag>
+     */
+    public function getTags(): Collection
+    {
+        return $this->tags;
+    }
+
+    /**
+     * @param iterable<Tag> $tags
+     */
+    public function replaceTags(iterable $tags): self
+    {
+        $wanted = [];
+        foreach ($tags as $tag) {
+            $wanted[$tag->getId()] = $tag;
+        }
+
+        foreach ($this->tags as $tag) {
+            if (!isset($wanted[$tag->getId()])) {
+                $this->tags->removeElement($tag);
+            }
+            unset($wanted[$tag->getId()]);
+        }
+
+        foreach ($wanted as $tag) {
+            $this->tags->add($tag);
+        }
+
+        return $this;
+    }
+
+    /**
+     * Tags and category are not part of the note payload: an update must leave them as they are.
+     */
+    public function keepTaxonomyOf(self $stored): self
+    {
+        $this->category = $stored->category;
+        $this->tags = $stored->tags;
 
         return $this;
     }

@@ -427,6 +427,159 @@ button:disabled {
     font-weight: 600;
 }
 
+.note-taxonomy {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 9px;
+}
+
+.chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 100%;
+    padding: 2px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: #fff;
+    color: #5b4635;
+    font-size: 12px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.chip--category {
+    border-radius: 6px;
+    background: var(--panel-alt);
+}
+
+.chip-remove {
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1;
+}
+
+.chip-remove:hover {
+    background: transparent;
+    color: var(--danger);
+}
+
+.color-dot {
+    flex: none;
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    border-radius: 50%;
+}
+
+.taxonomy-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.taxonomy-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 64px auto;
+    gap: 10px;
+    align-items: end;
+    margin-bottom: 8px;
+}
+
+.color-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 10px;
+}
+
+.color-toggle input {
+    width: auto;
+}
+
+.color-input {
+    font-size: 0;
+}
+
+.color-input input {
+    height: 38px;
+    padding: 3px;
+}
+
+.color-input input:disabled {
+    opacity: 0.35;
+}
+
+.taxonomy-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.taxonomy-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.taxonomy-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.taxonomy-dialog-body {
+    display: grid;
+    gap: 10px;
+}
+
+.tag-options {
+    margin: 4px 0 0;
+    padding: 4px;
+    max-height: 190px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    list-style: none;
+}
+
+.tag-option {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+
+.tag-option[aria-selected="true"],
+.tag-option[role="option"]:hover {
+    background: var(--panel-alt);
+}
+
+.tag-option--empty {
+    color: var(--muted);
+    cursor: default;
+}
+
 button:focus-visible,
 select:focus-visible,
 input:focus-visible,
@@ -464,7 +617,16 @@ textarea:focus-visible {
     }
 
     .share-form,
-    .share-row {
+    .share-row,
+    .taxonomy-grid {
         grid-template-columns: 1fr;
+    }
+
+    .taxonomy-form {
+        grid-template-columns: minmax(0, 1fr) auto 64px;
+    }
+
+    .taxonomy-form button {
+        grid-column: 1 / -1;
     }
 }

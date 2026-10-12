@@ -13,7 +13,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 #[AsCommand(
     name: 'app:fixtures:sharing:purge',
-    description: 'Removes the notes-sharing fixtures of a run ID.',
+    description: 'Removes the fixtures of a run ID.',
 )]
 final class SharingFixturesPurgeCommand extends Command
 {
@@ -38,7 +38,7 @@ final class SharingFixturesPurgeCommand extends Command
             return Command::INVALID;
         }
 
-        $output->writeln(sprintf('Removed %d persona(s) and their notes, shares and audit records.', $removed));
+        $output->writeln(sprintf('Removed %d persona(s) and their notes, shares, tags, categories and audit records.', $removed));
 
         return Command::SUCCESS;
     }

@@ -33,10 +33,14 @@ final class NotePersistProcessor implements ProcessorInterface
         }
 
         // On update the payload is a fresh object whose properties are copied over the stored note,
-        // so the owner must be carried over explicitly: an editor saving a note must not become its owner.
+        // so what the payload cannot carry must be kept explicitly: tags, category and the owner
+        // (an editor saving a note must not become its owner).
         $previous = $context['previous_data'] ?? null;
-        if ($previous instanceof Note && null !== $previous->getOwner()) {
-            $data->setOwner($previous->getOwner());
+        if ($previous instanceof Note) {
+            $data->keepTaxonomyOf($previous);
+            if (null !== $previous->getOwner()) {
+                $data->setOwner($previous->getOwner());
+            }
         }
 
         if (null === $data->getOwner()) {

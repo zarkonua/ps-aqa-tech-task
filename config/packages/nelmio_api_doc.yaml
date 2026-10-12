@@ -46,6 +46,61 @@ nelmio_api_doc:
                         version: { type: integer, minimum: 1, description: 'Incremented on every change; send it back on PATCH to detect concurrent updates.', example: 1 }
                         created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
                         updated_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                TaxonomyItemBrief:
+                    type: object
+                    required: [id, name, color]
+                    properties:
+                        id: { type: string, format: uuid, example: '0b0f6f0e-3c5e-4e63-9f0a-6f2f0d0c1a11' }
+                        name: { type: string, minLength: 1, maxLength: 30, example: 'Work' }
+                        color: { type: string, nullable: true, pattern: '^#[0-9a-f]{6}$', example: '#1f77b4' }
+                TaxonomyItem:
+                    description: A tag or a category.
+                    type: object
+                    required: [id, name, color, version, created_at, updated_at]
+                    properties:
+                        id: { type: string, format: uuid, example: '0b0f6f0e-3c5e-4e63-9f0a-6f2f0d0c1a11' }
+                        name: { type: string, minLength: 1, maxLength: 30, example: 'Work' }
+                        color: { type: string, nullable: true, pattern: '^#[0-9a-f]{6}$', example: '#1f77b4' }
+                        version: { type: integer, minimum: 1, description: 'Incremented on every change; send it back on PATCH to detect concurrent updates.', example: 1 }
+                        created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                        updated_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                TaxonomyItemList:
+                    type: object
+                    required: [items, total, page, items_per_page]
+                    properties:
+                        items:
+                            type: array
+                            items: { $ref: '#/components/schemas/TaxonomyItem' }
+                        total: { type: integer, example: 1 }
+                        page: { type: integer, example: 1 }
+                        items_per_page: { type: integer, example: 50 }
+                TaxonomyItemCreate:
+                    type: object
+                    required: [name]
+                    additionalProperties: false
+                    properties:
+                        name: { type: string, minLength: 1, maxLength: 30, description: 'Length is counted after trimming.', example: 'Work' }
+                        color: { type: string, nullable: true, pattern: '^#[0-9a-fA-F]{6}$', example: '#1f77b4' }
+                TaxonomyItemUpdate:
+                    type: object
+                    additionalProperties: false
+                    properties:
+                        name: { type: string, minLength: 1, maxLength: 30, example: 'Work' }
+                        color: { type: string, nullable: true, pattern: '^#[0-9a-fA-F]{6}$', description: 'null removes the color.', example: '#1f77b4' }
+                        version: { type: integer, minimum: 1, example: 1 }
+                NoteTaxonomy:
+                    type: object
+                    required: [note_id, category, tags]
+                    properties:
+                        note_id: { type: string, format: uuid, example: '5f1d7a52-6b53-4d0c-8f0e-2d6b3a9c7e10' }
+                        category:
+                            nullable: true
+                            allOf:
+                                - { $ref: '#/components/schemas/TaxonomyItemBrief' }
+                        tags:
+                            type: array
+                            maxItems: 10
+                            items: { $ref: '#/components/schemas/TaxonomyItemBrief' }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]

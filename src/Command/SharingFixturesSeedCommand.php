@@ -15,7 +15,7 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
 #[AsCommand(
     name: 'app:fixtures:sharing:seed',
-    description: 'Seeds the notes-sharing personas and notes for a run ID and prints their manifest as JSON.',
+    description: 'Seeds the personas, notes, shares, tags and categories for a run ID and prints their manifest as JSON.',
 )]
 final class SharingFixturesSeedCommand extends Command
 {

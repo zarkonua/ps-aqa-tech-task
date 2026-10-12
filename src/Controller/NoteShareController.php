@@ -19,7 +19,6 @@ use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\OptimisticLockException;
 use OpenApi\Attributes as OA;
-use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -47,7 +46,6 @@ final class NoteShareController extends ApiController
         private readonly NoteAccess $access,
         private readonly AuditLogger $audit,
         private readonly EntityManagerInterface $entityManager,
-        private readonly LoggerInterface $logger,
     ) {
     }
 
@@ -242,12 +240,7 @@ final class NoteShareController extends ApiController
      */
     private function handle(string $noteId, \Closure $action): JsonResponse
     {
-        try {
-            $user = $this->getUser();
-            if (!$user instanceof User) {
-                return $this->error('Unauthorized.', Response::HTTP_UNAUTHORIZED);
-            }
-
+        return $this->guarded(function (User $user) use ($noteId, $action): JsonResponse {
             $note = Uuid::isValid($noteId) ? $this->notes->find($noteId) : null;
             if (null === $note || !$this->access->canView($note, $user)) {
                 return $this->error('Note not found.', Response::HTTP_NOT_FOUND);
@@ -258,13 +251,7 @@ final class NoteShareController extends ApiController
             }
 
             return $action($note, $user);
-        } catch (MalformedPayloadException $e) {
-            return $this->error($e->getMessage());
-        } catch (\Throwable $e) {
-            $this->logger->error('Note sharing request failed: {exception}', ['exception' => $e::class, 'note_id' => $noteId]);
-
-            return $this->error('Internal server error.', Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        });
     }
 
     private function findShare(Note $note, string $shareId): ?NoteShare
@@ -274,40 +261,6 @@ final class NoteShareController extends ApiController
         }
 
         return $this->shares->findOneBy(['id' => $shareId, 'note' => $note]);
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function objectPayload(Request $request): array
-    {
-        try {
-            $payload = $this->payload($request);
-        } catch (\RuntimeException $e) {
-            throw new MalformedPayloadException($e->getMessage());
-        }
-
-        if ([] !== $payload && array_is_list($payload)) {
-            throw new MalformedPayloadException('JSON payload must be an object.');
-        }
-
-        return $payload;
-    }
-
-    /**
-     * @param array<string, mixed> $payload
-     * @param list<string>         $allowed
-     *
-     * @return list<array{propertyPath: string, message: string}>
-     */
-    private function unexpectedFields(array $payload, array $allowed): array
-    {
-        $violations = [];
-        foreach (array_diff(array_keys($payload), $allowed) as $field) {
-            $violations[] = ['propertyPath' => mb_substr((string) $field, 0, 64), 'message' => 'Unexpected field.'];
-        }
-
-        return $violations;
     }
 
     /**
@@ -353,58 +306,6 @@ final class NoteShareController extends ApiController
         }
 
         return $role ?? ShareRole::Viewer;
-    }
-
-    /**
-     * @param array<string, mixed>                               $payload
-     * @param list<array{propertyPath: string, message: string}> $violations
-     */
-    private function validatedVersion(array $payload, array &$violations): ?int
-    {
-        if (!array_key_exists('version', $payload)) {
-            return null;
-        }
-
-        $version = $payload['version'];
-        if (!is_int($version) || $version < 1) {
-            $violations[] = ['propertyPath' => 'version', 'message' => 'Version must be a positive integer.'];
-
-            return null;
-        }
-
-        return $version;
-    }
-
-    /**
-     * @param list<array{propertyPath: string, message: string}> $violations
-     */
-    private function validatedQueryInt(Request $request, string $name, int $default, int $min, int $max, array &$violations): int
-    {
-        if (!$request->query->has($name)) {
-            return $default;
-        }
-
-        $value = filter_var($request->query->all()[$name], FILTER_VALIDATE_INT, ['options' => ['min_range' => $min, 'max_range' => $max]]);
-        if (false === $value) {
-            $violations[] = [
-                'propertyPath' => $name,
-                'message' => PHP_INT_MAX === $max
-                    ? sprintf('%s must be an integer of at least %d.', $name, $min)
-                    : sprintf('%s must be an integer between %d and %d.', $name, $min, $max),
-            ];
-
-            return $default;
-        }
-
-        return $value;
-    }
-
-    /**
-     * @param list<array{propertyPath: string, message: string}> $violations
-     */
-    private function validationError(array $violations): JsonResponse
-    {
-        return $this->json(['error' => 'Validation failed.', 'violations' => $violations], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     private function staleShareError(): JsonResponse

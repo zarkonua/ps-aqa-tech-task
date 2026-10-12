@@ -22,6 +22,14 @@ class AuditEvent
     public const SHARE_ROLE_CHANGED = 'share.role_changed';
     public const SHARE_REVOKED = 'share.revoked';
     public const SHARE_REMOVED_WITH_NOTE = 'share.removed_with_note';
+    public const TAG_CREATED = 'tag.created';
+    public const TAG_UPDATED = 'tag.updated';
+    public const TAG_DELETED = 'tag.deleted';
+    public const CATEGORY_CREATED = 'category.created';
+    public const CATEGORY_UPDATED = 'category.updated';
+    public const CATEGORY_DELETED = 'category.deleted';
+    public const NOTE_TAGS_CHANGED = 'note.tags_changed';
+    public const NOTE_CATEGORY_CHANGED = 'note.category_changed';
 
     #[ORM\Id]
     #[ORM\Column(type: 'string', length: 36)]
@@ -33,8 +41,12 @@ class AuditEvent
     #[ORM\Column(name: 'actor_id', length: 36, nullable: true)]
     private ?string $actorId;
 
-    #[ORM\Column(name: 'note_id', length: 36)]
-    private string $noteId;
+    #[ORM\Column(name: 'note_id', length: 36, nullable: true)]
+    private ?string $noteId;
+
+    /** ID of the tag or category the event is about, when it is about one. */
+    #[ORM\Column(name: 'subject_id', length: 36, nullable: true)]
+    private ?string $subjectId;
 
     #[ORM\Column(name: 'share_id', length: 36, nullable: true)]
     private ?string $shareId;
@@ -58,16 +70,18 @@ class AuditEvent
     public function __construct(
         string $eventType,
         ?string $actorId,
-        string $noteId,
+        ?string $noteId,
         ?string $shareId = null,
         ?string $targetUserId = null,
         array $metadata = [],
         ?string $correlationId = null,
+        ?string $subjectId = null,
     ) {
         $this->id = Uuid::v4();
         $this->eventType = $eventType;
         $this->actorId = $actorId;
         $this->noteId = $noteId;
+        $this->subjectId = $subjectId;
         $this->shareId = $shareId;
         $this->targetUserId = $targetUserId;
         $this->metadata = $metadata;
@@ -90,9 +104,14 @@ class AuditEvent
         return $this->actorId;
     }
 
-    public function getNoteId(): string
+    public function getNoteId(): ?string
     {
         return $this->noteId;
+    }
+
+    public function getSubjectId(): ?string
+    {
+        return $this->subjectId;
     }
 
     public function getShareId(): ?string

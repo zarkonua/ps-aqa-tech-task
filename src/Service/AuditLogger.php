@@ -29,10 +29,11 @@ final class AuditLogger
     public function record(
         string $eventType,
         ?User $actor,
-        string $noteId,
+        ?string $noteId,
         ?string $shareId = null,
         ?string $targetUserId = null,
         array $metadata = [],
+        ?string $subjectId = null,
     ): AuditEvent {
         $correlationId = $this->requestStack->getMainRequest()?->attributes->get(CorrelationIdSubscriber::ATTRIBUTE);
 
@@ -44,6 +45,7 @@ final class AuditLogger
             $targetUserId,
             $metadata,
             is_string($correlationId) ? $correlationId : null,
+            $subjectId,
         );
         $this->entityManager->persist($event);
 
@@ -52,6 +54,7 @@ final class AuditLogger
             'actor_id' => $event->getActorId(),
             'note_id' => $noteId,
             'share_id' => $shareId,
+            'subject_id' => $subjectId,
             'target_user_id' => $targetUserId,
             'correlation_id' => $event->getCorrelationId(),
         ]);
