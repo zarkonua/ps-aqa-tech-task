@@ -426,6 +426,59 @@ button:disabled {
     font-weight: 600;
 }
 
+.live-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.live-badge--on {
+    border-color: #3f8a4b;
+    background: #e2f3e1;
+    color: #26592e;
+}
+
+.live-badge--off {
+    border-color: #b4483c;
+    background: #fbe4df;
+    color: #7c2f27;
+}
+
+.presence-list {
+    display: flex;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.presence-avatar {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: var(--panel-alt);
+    color: #5b4635;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.presence-avatar--me {
+    border-color: var(--accent);
+}
+
+.live-notice {
+    padding: 7px 9px;
+    border: 1px solid #ddc3a6;
+    border-radius: 8px;
+    background: #f4e7d8;
+    font-size: 14px;
+}
+
 .timeline {
     display: grid;
     gap: 8px;

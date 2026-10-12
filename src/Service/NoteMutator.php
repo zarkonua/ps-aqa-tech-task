@@ -8,6 +8,7 @@ use App\Entity\AuditEvent;
 use App\Entity\Category;
 use App\Entity\Note;
 use App\Entity\NoteAttachment;
+use App\Entity\RealtimeEvent;
 use App\Entity\Tag;
 use App\Entity\User;
 use App\Repository\NoteAttachmentRepository;
@@ -29,6 +30,7 @@ final class NoteMutator
         private readonly NoteAttachmentRepository $attachments,
         private readonly AttachmentStorage $storage,
         private readonly AuditLogger $audit,
+        private readonly Realtime $realtime,
     ) {
     }
 
@@ -98,11 +100,23 @@ final class NoteMutator
 
     public function delete(Note $note, User $actor): void
     {
+        $noteId = (string) $note->getId();
         $files = $this->attachmentKeys($note);
         $this->auditDeletion($note, $actor);
         $this->entityManager->remove($note);
         $this->entityManager->flush();
+        $this->afterDeletion($noteId, $files);
+    }
+
+    /**
+     * What has to happen once a deletion is committed: the files go, and open streams are told.
+     *
+     * @param list<string> $files
+     */
+    public function afterDeletion(string $noteId, array $files): void
+    {
         $this->storage->delete($files);
+        $this->realtime->publish($noteId, RealtimeEvent::NOTE_DELETED);
     }
 
     /**
@@ -114,13 +128,5 @@ final class NoteMutator
     public function attachmentKeys(Note $note): array
     {
         return array_map(static fn (NoteAttachment $attachment): string => $attachment->getStorageKey(), $this->attachments->findByNote($note));
-    }
-
-    /**
-     * @param list<string> $keys
-     */
-    public function removeFiles(array $keys): void
-    {
-        $this->storage->delete($keys);
     }
 }

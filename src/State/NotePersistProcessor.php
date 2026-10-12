@@ -10,10 +10,12 @@ use ApiPlatform\State\ProcessorInterface;
 use App\Entity\AuditEvent;
 use App\Entity\Note;
 use App\Entity\NoteRevision;
+use App\Entity\RealtimeEvent;
 use App\Entity\User;
 use App\EventSubscriber\NoteEtagSubscriber;
 use App\Service\AuditLogger;
 use App\Service\NoteRevisions;
+use App\Service\Realtime;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
@@ -32,6 +34,7 @@ final class NotePersistProcessor implements ProcessorInterface
         private readonly RequestStack $requestStack,
         private readonly EntityManagerInterface $entityManager,
         private readonly AuditLogger $audit,
+        private readonly Realtime $realtime,
     ) {
     }
 
@@ -103,6 +106,7 @@ final class NotePersistProcessor implements ProcessorInterface
             $this->revisions->record($saved, NoteRevision::UPDATED, $user);
             $this->audit->record(AuditEvent::NOTE_UPDATED, $user, (string) $saved->getId(), metadata: $summary + ['version' => $saved->getVersion()]);
             $this->entityManager->flush();
+            $this->realtime->publish((string) $saved->getId(), RealtimeEvent::NOTE_UPDATED, ['version' => $saved->getVersion(), 'actor' => ['id' => (string) $user->getId(), 'email' => $user->getEmail()]]);
 
             return $this->withEtag($saved);
         });

@@ -7,6 +7,7 @@ namespace App\Controller;
 use App\Entity\AuditEvent;
 use App\Entity\Note;
 use App\Entity\NoteRevision;
+use App\Entity\RealtimeEvent;
 use App\Entity\User;
 use App\Repository\NoteRepository;
 use App\Repository\NoteRevisionRepository;
@@ -14,6 +15,7 @@ use App\Repository\UserRepository;
 use App\Security\NoteAccess;
 use App\Service\AuditLogger;
 use App\Service\NoteRevisions;
+use App\Service\Realtime;
 use App\Util\Uuid;
 use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Attributes as OA;
@@ -41,6 +43,7 @@ final class NoteRevisionController extends ApiController
         private readonly NoteRevisions $history,
         private readonly AuditLogger $audit,
         private readonly EntityManagerInterface $entityManager,
+        private readonly Realtime $realtime,
     ) {
     }
 
@@ -168,6 +171,7 @@ final class NoteRevisionController extends ApiController
                 if (!$claimed) {
                     return $stale;
                 }
+                $this->realtime->publish((string) $note->getId(), RealtimeEvent::NOTE_UPDATED, ['version' => $note->getVersion(), 'actor' => ['id' => (string) $user->getId(), 'email' => $user->getEmail()]]);
             }
 
             return $this->json(

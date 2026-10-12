@@ -33,12 +33,13 @@ final class NoteRemoveProcessor implements ProcessorInterface
         }
 
         $actor = $this->security->getUser();
+        $noteId = (string) $data->getId();
         $files = $this->mutator->attachmentKeys($data);
         $this->mutator->auditDeletion($data, $actor instanceof User ? $actor : null);
 
         $result = $this->removeProcessor->process($data, $operation, $uriVariables, $context);
         // Only once the note is really gone.
-        $this->mutator->removeFiles($files);
+        $this->mutator->afterDeletion($noteId, $files);
 
         return $result;
     }

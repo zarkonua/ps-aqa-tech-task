@@ -8,7 +8,14 @@
 # https://symfony.com/doc/current/best_practices.html#use-parameters-for-application-configuration
 parameters:
     # Uploaded files live under var/, which the web server never serves.
+    # Seconds one event-stream response stays open before the client reconnects.
+    app.realtime.stream_seconds: 25
     app.attachments_dir: '%kernel.project_dir%/var/storage/%kernel.environment%/attachments'
+
+when@test:
+    parameters:
+        # Tests read a stream as an ordinary response: one pass, then it ends.
+        app.realtime.stream_seconds: 0
 
 services:
     # default configuration for services in *this* file

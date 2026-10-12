@@ -101,6 +101,7 @@ final class SharingFixtures
         private readonly Throttle $throttle,
         private readonly AttachmentStorage $storage,
         private readonly NoteAttachmentRepository $attachments,
+        private readonly Realtime $realtime,
     ) {
     }
 
@@ -408,6 +409,12 @@ final class SharingFixtures
 
         // The attachment rows go with the notes; their files have to be removed here.
         $files = $this->attachments->storageKeysOfOwners($userIds);
+        // Realtime events and presence have no foreign keys either.
+        $noteIds = array_column(
+            $this->entityManager->createQueryBuilder()->select('n.id')->from(Note::class, 'n')->where('IDENTITY(n.owner) IN (:users)')->setParameter('users', $userIds)->getQuery()->getScalarResult(),
+            'id',
+        );
+        $this->realtime->forget($noteIds, $userIds);
 
         $this->entityManager->createQueryBuilder()
             ->delete(AuditEvent::class, 'a')

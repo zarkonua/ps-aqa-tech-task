@@ -7,6 +7,7 @@ namespace App\Controller;
 use App\Entity\AuditEvent;
 use App\Entity\Note;
 use App\Entity\NoteShare;
+use App\Entity\RealtimeEvent;
 use App\Entity\User;
 use App\Enum\ShareRole;
 use App\Repository\NoteRepository;
@@ -15,6 +16,7 @@ use App\Repository\UserRepository;
 use App\Security\NoteAccess;
 use App\Service\AuditLogger;
 use App\Service\Notifier;
+use App\Service\Realtime;
 use App\Service\Throttle;
 use App\Util\Uuid;
 use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
@@ -51,6 +53,7 @@ final class NoteShareController extends ApiController
         private readonly EntityManagerInterface $entityManager,
         private readonly Throttle $throttle,
         private readonly Notifier $notifier,
+        private readonly Realtime $realtime,
     ) {
     }
 
@@ -244,6 +247,9 @@ final class NoteShareController extends ApiController
                 return $this->staleShareError();
             }
             $this->notifier->shareRevoked($revokedUser, $actor, $revokedId, $note);
+            // For the revoked user's own open streams; nobody else is told who lost access.
+            $this->realtime->publish((string) $note->getId(), RealtimeEvent::SHARE_REVOKED, [], (string) $revokedUser->getId());
+            $this->realtime->leave((string) $note->getId(), $revokedUser);
 
             return new JsonResponse(null, Response::HTTP_NO_CONTENT);
         });

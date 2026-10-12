@@ -729,36 +729,316 @@ function openShareDialog(note) {
     });
 }
 
-function openUpdateNoteModal(note) {
+// Follows what happens to a note while it is open: a stream when possible, polling when not.
+// The token travels in the Authorization header (which is why this is fetch and not EventSource).
+function connectNoteStream(noteId, handlers) {
+    const seen = new Set();
+    let lastEventId = "";
+    let closed = false;
+    let controller = null;
+    let pollTimer = 0;
+    let failures = 0;
+
+    const dispatch = (type, data, id) => {
+        if (closed) {
+            return;
+        }
+        // The same event can arrive twice around a reconnect; it must only count once.
+        if (id) {
+            if (seen.has(id)) {
+                return;
+            }
+            seen.add(id);
+            lastEventId = id;
+        }
+        handlers.onEvent(type, data || {});
+    };
+
+    const stop = (reason) => {
+        if (!closed) {
+            closed = true;
+            controller?.abort();
+            clearTimeout(pollTimer);
+            handlers.onEnd?.(reason);
+        }
+    };
+
+    async function poll() {
+        if (closed) {
+            return;
+        }
+        try {
+            const state = await api(`/api/realtime/notes/${noteId}/poll${lastEventId ? `?after=${lastEventId}` : ""}`);
+            if (closed) {
+                return;
+            }
+            handlers.onState("polling");
+            if (state.resync) {
+                handlers.onEvent("resync", {version: state.version, presence: state.presence});
+            } else {
+                handlers.onEvent("presence.state", {presence: state.presence});
+            }
+            for (const event of Array.isArray(state.events) ? state.events : []) {
+                dispatch(event.type, event.data, event.id);
+            }
+            lastEventId = state.last_event_id || lastEventId;
+            // Every few polls, see whether a stream works again.
+            failures += 1;
+            if (failures % 4 === 0) {
+                stream();
+                return;
+            }
+        } catch (error) {
+            if (error.status === 404 || error.status === 401) {
+                stop(error.status === 404 ? "gone" : "auth");
+                return;
+            }
+            handlers.onState("offline");
+        }
+        pollTimer = setTimeout(poll, 5000);
+    }
+
+    async function stream() {
+        if (closed) {
+            return;
+        }
+        controller = new AbortController();
+        try {
+            const headers = {Accept: "text/event-stream", Authorization: `Bearer ${getToken() || ""}`};
+            if (lastEventId) {
+                headers["Last-Event-ID"] = lastEventId;
+            }
+            const response = await fetch(`/api/realtime/notes/${noteId}/events`, {headers, signal: controller.signal});
+            if (response.status === 404 || response.status === 401) {
+                stop(response.status === 404 ? "gone" : "auth");
+                return;
+            }
+            if (!response.ok || !response.body) {
+                throw new Error("stream unavailable");
+            }
+
+            handlers.onState("live");
+            failures = 0;
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            for (;;) {
+                const {value, done} = await reader.read();
+                if (done) {
+                    break;
+                }
+                buffer += decoder.decode(value, {stream: true});
+                let boundary = buffer.indexOf("\n\n");
+                while (boundary !== -1) {
+                    const block = buffer.slice(0, boundary);
+                    buffer = buffer.slice(boundary + 2);
+                    boundary = buffer.indexOf("\n\n");
+                    const fields = {};
+                    for (const line of block.split("\n")) {
+                        const separator = line.indexOf(": ");
+                        if (separator > 0) {
+                            fields[line.slice(0, separator)] = line.slice(separator + 2);
+                        }
+                    }
+                    if (fields.event) {
+                        let data = {};
+                        try {
+                            data = JSON.parse(fields.data || "{}");
+                        } catch {
+                            data = {};
+                        }
+                        dispatch(fields.event, data, fields.id);
+                    }
+                }
+            }
+            // The server ends each response after a while: carry on from the last event.
+            if (!closed) {
+                stream();
+            }
+        } catch {
+            if (!closed) {
+                handlers.onState("offline");
+                pollTimer = setTimeout(poll, 2000);
+            }
+        }
+    }
+
+    stream();
+
+    return () => {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        controller?.abort();
+        clearTimeout(pollTimer);
+        // Best effort: presence also expires by itself.
+        api(`/api/realtime/notes/${noteId}/presence`, {method: "DELETE"}).catch(() => {});
+    };
+}
+
+// The note opened for editing, or (for viewers) for reading. While it is open it shows who else
+// has it open and tells when somebody saves a newer version.
+function openUpdateNoteModal(note, canEdit = true) {
     return new Promise((resolve) => {
-        const {backdrop, content} = buildModalShell("Update Note");
+        const {backdrop, content} = buildModalShell(canEdit ? "Update Note" : "View Note");
 
         const form = document.createElement("form");
         form.className = "modal-form";
         form.innerHTML = `
-            <label>Title <input type="text" name="title" required></label>
-            <label>Content <textarea name="content" rows="8" required></textarea></label>
+            <div class="live-bar">
+                <span class="badge live-badge" data-role="connection" role="status">Connecting…</span>
+                <ul class="presence-list" data-role="presence" aria-label="People who have this note open"></ul>
+            </div>
+            <p class="live-notice hidden" data-role="notice" role="status"></p>
+            <label>Title <input type="text" name="title" required ${canEdit ? "" : "readonly"}></label>
+            <label>Content <textarea name="content" rows="8" required ${canEdit ? "" : "readonly"}></textarea></label>
             <div class="modal-actions">
-                <button type="button" class="secondary" data-action="cancel">Cancel</button>
-                <button type="submit">Save</button>
+                <button type="button" class="secondary" data-action="cancel">${canEdit ? "Cancel" : "Close"}</button>
+                ${canEdit ? `<button type="submit">Save</button>` : ""}
             </div>
         `;
 
         const titleInput = form.querySelector('input[name="title"]');
         const contentInput = form.querySelector('textarea[name="content"]');
-        titleInput.value = note.title || "";
-        contentInput.value = note.content || "";
+        const connectionEl = form.querySelector('[data-role="connection"]');
+        const presenceEl = form.querySelector('[data-role="presence"]');
+        const noticeEl = form.querySelector('[data-role="notice"]');
+        let baseVersion = note.version;
+        let base = {title: note.title || "", content: note.content || ""};
+        titleInput.value = base.title;
+        contentInput.value = base.content;
 
+        let closed = false;
+        let disconnect = () => {};
+        let deactivate = () => {};
         const close = (result) => {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            disconnect();
             backdrop.remove();
+            deactivate();
             resolve(result);
         };
 
+        const present = new Map();
+        const renderPresence = () => {
+            presenceEl.innerHTML = "";
+            for (const person of present.values()) {
+                const item = document.createElement("li");
+                item.className = "presence-avatar";
+                const isMe = person.id === accountProfile?.id;
+                item.textContent = (person.email || "?").slice(0, 2).toUpperCase();
+                item.title = isMe ? `${person.email} (you)` : person.email;
+                item.setAttribute("aria-label", item.title);
+                item.classList.toggle("presence-avatar--me", isMe);
+                presenceEl.appendChild(item);
+            }
+        };
+        const setPresence = (people) => {
+            present.clear();
+            for (const person of Array.isArray(people) ? people : []) {
+                present.set(person.id, person);
+            }
+            renderPresence();
+        };
+
+        const isDirty = () => titleInput.value !== base.title || contentInput.value !== base.content;
+        const showNotice = (text, action) => {
+            noticeEl.textContent = `${text} `;
+            noticeEl.classList.remove("hidden");
+            if (action) {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "secondary";
+                button.textContent = action.label;
+                button.addEventListener("click", action.run);
+                noticeEl.appendChild(button);
+            }
+        };
+
+        // Brings the dialog to the latest saved version. Unsaved typing is only replaced when asked to.
+        async function loadLatest(who, force) {
+            let latest;
+            try {
+                latest = await api(`/api/notes/${note.id}`);
+            } catch {
+                return;
+            }
+            if (closed || latest.version <= baseVersion) {
+                return;
+            }
+            const apply = () => {
+                base = {title: latest.title || "", content: latest.content || ""};
+                baseVersion = latest.version;
+                titleInput.value = base.title;
+                contentInput.value = base.content;
+                showNotice(`Showing the version saved by ${who} (revision ${latest.version}).`);
+            };
+            if (force || !isDirty()) {
+                apply();
+            } else {
+                showNotice(`${who} saved a newer version (revision ${latest.version}) while you were editing. Saving yours will ask what to keep.`, {
+                    label: "Discard my changes and load it",
+                    run: apply,
+                });
+            }
+        }
+
+        const labels = {live: "Live", polling: "Connected (checking every few seconds)", offline: "Offline — changes by others are not shown"};
+        disconnect = connectNoteStream(note.id, {
+            onState: (state) => {
+                connectionEl.textContent = labels[state];
+                connectionEl.classList.toggle("live-badge--on", state !== "offline");
+                connectionEl.classList.toggle("live-badge--off", state === "offline");
+            },
+            onEvent: (type, data) => {
+                if (type === "connected" || type === "resync" || type === "presence.state") {
+                    setPresence(data.presence);
+                    if (type !== "presence.state" && data.version > baseVersion) {
+                        loadLatest("someone else", false);
+                    }
+                } else if (type === "presence.joined" && data.user) {
+                    present.set(data.user.id, data.user);
+                    renderPresence();
+                } else if (type === "presence.left" && data.user) {
+                    present.delete(data.user.id);
+                    renderPresence();
+                } else if (type === "note.updated" && data.version > baseVersion && data.actor?.id !== accountProfile?.id) {
+                    loadLatest(data.actor?.email || "someone else", false);
+                } else if (type === "share.revoked") {
+                    close({lost: "This note is no longer shared with you."});
+                } else if (type === "note.deleted") {
+                    close({lost: "This note was deleted."});
+                } else if (type === "auth.expired") {
+                    close(null);
+                    signOutLocally("Your session has ended. Sign in again.", true);
+                }
+            },
+            onEnd: (reason) => {
+                if (reason === "gone") {
+                    close({lost: "This note is no longer available to you."});
+                } else if (reason === "auth") {
+                    close(null);
+                }
+            },
+        });
+        const onOffline = () => {
+            connectionEl.textContent = labels.offline;
+            connectionEl.classList.add("live-badge--off");
+            connectionEl.classList.remove("live-badge--on");
+        };
+        window.addEventListener("offline", onOffline);
+
         form.addEventListener("submit", (event) => {
             event.preventDefault();
+            window.removeEventListener("offline", onOffline);
             close({
                 title: titleInput.value.trim(),
                 content: contentInput.value,
+                version: baseVersion,
             });
         });
 
@@ -771,7 +1051,8 @@ function openUpdateNoteModal(note) {
 
         content.appendChild(form);
         document.body.appendChild(backdrop);
-        titleInput.focus();
+        deactivate = activateDialog(backdrop, () => close(null));
+        (canEdit ? titleInput : form.querySelector('[data-action="cancel"]')).focus();
     });
 }
 
@@ -1020,7 +1301,7 @@ function renderNotes() {
             <p>${escapeHtml(note.content || "")}</p>
             <small>Updated: <time datetime="${escapeHtml(note.updated_at || "")}">${escapeHtml(formatTimestamp(note.updated_at))}</time></small>
             <div class="note-actions">
-                ${canEdit ? `<button data-action="edit">Update</button>` : ""}
+                ${canEdit ? `<button data-action="edit">Update</button>` : `<button class="secondary" data-action="view">View</button>`}
                 ${canEdit ? `<button class="secondary" data-action="tags">Tags</button>` : ""}
                 <button class="secondary" data-action="files">Files</button>
                 <button class="secondary" data-action="history">History</button>
@@ -1045,9 +1326,22 @@ function renderNotes() {
             setStatus(error.message, true);
         };
 
+        wrapper.querySelector('[data-action="view"]')?.addEventListener("click", async () => {
+            const result = await openUpdateNoteModal(note, false);
+            if (result?.lost) {
+                setStatus(result.lost, true);
+            }
+            await refreshNotes().catch(() => {});
+        });
+
         wrapper.querySelector('[data-action="edit"]')?.addEventListener("click", async () => {
             const updates = await openUpdateNoteModal(note);
             if (!updates) {
+                return;
+            }
+            if (updates.lost) {
+                setStatus(updates.lost, true);
+                await refreshNotes().catch(() => {});
                 return;
             }
 
@@ -1733,7 +2027,7 @@ function openNoteTaxonomyDialog(note) {
 // Saves an edit based on the version the user opened. If the note changed meanwhile the server
 // refuses (412) and the user decides what happens to their text; nothing is overwritten silently.
 async function saveNote(note, updates) {
-    let basedOn = note.version;
+    let basedOn = updates.version ?? note.version;
     for (;;) {
         try {
             await api(`/api/notes/${note.id}`, {

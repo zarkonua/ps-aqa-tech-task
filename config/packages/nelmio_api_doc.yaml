@@ -285,6 +285,29 @@ nelmio_api_doc:
                             items: { $ref: '#/components/schemas/AuditEvent' }
                         next_cursor: { type: string, nullable: true, description: 'Send as "cursor" to get the next (older) page; null on the last page.', example: 'MTc5MTgwMDAwMHw4YTdiNmM1ZC00ZTNmLTRhMmItOWMxZC0wZTlmOGE3YjZjNWQ' }
                         limit: { type: integer, example: 20 }
+                RealtimeEvent:
+                    type: object
+                    required: [id, type, data, created_at]
+                    properties:
+                        id: { type: string, description: 'Opaque ID; pass the last one back to continue.', example: '5c3d0a51f1e94b0b9d2a7e6c4f8b1a20' }
+                        type: { type: string, enum: [note.updated, note.deleted, share.revoked, presence.joined, presence.left], example: note.updated }
+                        data: { type: object, description: 'note.updated: "version" and "actor". presence.*: "user". Never note text.', example: { version: 4, actor: { id: '1525…', email: 'editor@example.com' } } }
+                        created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                RealtimePoll:
+                    type: object
+                    required: [note_id, version, resync, events, last_event_id, presence]
+                    properties:
+                        note_id: { type: string, format: uuid }
+                        version: { type: integer, description: 'Current version of the note.', example: 4 }
+                        resync: { type: boolean, description: 'true when "after" is unknown or too old: reload the note instead of relying on "events".', example: false }
+                        events:
+                            type: array
+                            items: { $ref: '#/components/schemas/RealtimeEvent' }
+                        last_event_id: { type: string, nullable: true, description: 'Send as "after" next time.', example: '5c3d0a51f1e94b0b9d2a7e6c4f8b1a20' }
+                        presence:
+                            type: array
+                            description: 'Who has the note open, including the caller.'
+                            items: { $ref: '#/components/schemas/TaskPerson' }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]
