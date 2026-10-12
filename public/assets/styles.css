@@ -426,6 +426,97 @@ button:disabled {
     font-weight: 600;
 }
 
+.modal-dialog--wide {
+    width: min(980px, 100%);
+}
+
+.history-layout {
+    display: grid;
+    grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+}
+
+.history-list {
+    display: grid;
+    gap: 6px;
+    margin: 6px 0 0;
+    padding: 0;
+    max-height: 420px;
+    overflow: auto;
+    list-style: none;
+}
+
+.history-item {
+    display: grid;
+    gap: 2px;
+    width: 100%;
+    padding: 7px 9px;
+    border-color: var(--line);
+    background: #fff;
+    color: var(--text);
+    font-weight: 400;
+    font-size: 13px;
+    text-align: left;
+}
+
+.history-item:hover,
+.history-item[aria-pressed="true"] {
+    background: var(--panel-alt);
+}
+
+.history-detail {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+}
+
+.history-detail > button {
+    justify-self: start;
+}
+
+.diff-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.diff-title {
+    margin: 4px 0;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.diff-pane {
+    margin: 0;
+    padding: 8px;
+    min-height: 90px;
+    max-height: 320px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    font: 13px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.diff-line {
+    display: block;
+    padding: 0 4px;
+    border-left: 3px solid transparent;
+}
+
+.diff-line--removed {
+    border-left-color: #b4483c;
+    background: #fbe4df;
+}
+
+.diff-line--added {
+    border-left-color: #3f8a4b;
+    background: #e2f3e1;
+}
+
 .drop-zone {
     display: grid;
     gap: 8px;
@@ -726,8 +817,14 @@ textarea:focus-visible {
     .share-form,
     .share-row,
     .attachment-row,
-    .taxonomy-grid {
+    .taxonomy-grid,
+    .history-layout,
+    .diff-columns {
         grid-template-columns: 1fr;
+    }
+
+    .history-list {
+        max-height: 180px;
     }
 
     .taxonomy-form {

@@ -137,6 +137,30 @@ nelmio_api_doc:
                         uploaded_by: { type: string, format: uuid, nullable: true, example: 'f0f04231-8b66-4e5f-9d55-2eead364ea02' }
                         created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
                         download_url: { type: string, example: '/api/attachments/7c1e0d3a-2b4f-4d5e-8a9b-0c1d2e3f4a5b/download' }
+                NoteRevisionSummary:
+                    type: object
+                    required: [revision, kind, restored_from, title, actor, created_at]
+                    properties:
+                        revision: { type: integer, minimum: 1, example: 3 }
+                        kind: { type: string, enum: [create, update, restore], example: update }
+                        restored_from: { type: integer, nullable: true, description: 'For a restore: the revision whose text was brought back.', example: null }
+                        title: { type: string, example: 'Meeting notes' }
+                        actor:
+                            type: object
+                            nullable: true
+                            description: Who saved this revision.
+                            required: [id, email]
+                            properties:
+                                id: { type: string, format: uuid }
+                                email: { type: string, format: email, nullable: true, description: 'null when the account no longer exists.' }
+                        created_at: { type: string, format: date-time, example: '2026-10-11T09:30:00+00:00' }
+                NoteRevision:
+                    allOf:
+                        - { $ref: '#/components/schemas/NoteRevisionSummary' }
+                        - type: object
+                          required: [content]
+                          properties:
+                              content: { type: string, example: 'Agenda: …' }
                 NoteShareList:
                     type: object
                     required: [items, total, page, items_per_page]

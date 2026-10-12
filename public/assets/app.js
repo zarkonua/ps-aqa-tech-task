@@ -993,6 +993,7 @@ function renderNotes() {
                 ${canEdit ? `<button data-action="edit">Update</button>` : ""}
                 ${canEdit ? `<button class="secondary" data-action="tags">Tags</button>` : ""}
                 <button class="secondary" data-action="files">Files</button>
+                <button class="secondary" data-action="history">History</button>
                 ${role === "owner" ? `<button class="secondary" data-action="share">Share</button>` : ""}
                 ${role === "owner" ? `<button class="danger" data-action="delete">Delete</button>` : ""}
             </div>
@@ -1020,14 +1021,22 @@ function renderNotes() {
             }
 
             try {
-                await api(`/api/notes/${note.id}`, {
-                    method: "PUT",
-                    body: JSON.stringify({title: updates.title, content: updates.content}),
-                });
-                setStatus("Note updated.");
+                if (await saveNote(note, updates)) {
+                    setStatus("Note updated.");
+                }
                 await refreshNotes();
             } catch (error) {
                 await handleNoteError(error);
+            }
+        });
+
+        wrapper.querySelector('[data-action="history"]').addEventListener("click", async () => {
+            const result = await openHistoryDialog(note, canEdit);
+            if (result?.error) {
+                await handleNoteError(result.error);
+            } else if (result?.restored) {
+                setStatus(`Revision ${result.restored} restored.`);
+                await refreshNotes().catch((error) => setStatus(error.message, true));
             }
         });
 
@@ -1676,6 +1685,332 @@ function openNoteTaxonomyDialog(note) {
         deactivate = activateDialog(backdrop, () => close(null));
         renderChips();
         categorySelect.focus();
+        load();
+    });
+}
+
+// Saves an edit based on the version the user opened. If the note changed meanwhile the server
+// refuses (412) and the user decides what happens to their text; nothing is overwritten silently.
+async function saveNote(note, updates) {
+    let basedOn = note.version;
+    for (;;) {
+        try {
+            await api(`/api/notes/${note.id}`, {
+                method: "PATCH",
+                headers: {"If-Match": `"${basedOn}"`},
+                body: JSON.stringify({title: updates.title, content: updates.content}),
+            });
+            return true;
+        } catch (error) {
+            if (error.status !== 412) {
+                throw error;
+            }
+        }
+
+        const latest = await api(`/api/notes/${note.id}`);
+        const choice = await openConflictModal(latest, updates);
+        if (choice !== "overwrite") {
+            setStatus(choice === "discard" ? "Your changes were discarded; the note shows the other version." : "Not saved. Your text was not applied.", choice !== "discard");
+            return false;
+        }
+        basedOn = latest.version;
+    }
+}
+
+function openConflictModal(latest, mine) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("Note changed by someone else");
+
+        const body = document.createElement("div");
+        body.className = "modal-form";
+        body.innerHTML = `
+            <p class="modal-message">This note was saved by someone else while you were editing. Your text has not been saved.</p>
+            <div class="diff-columns">
+                <section aria-label="Their version">
+                    <h4 class="share-heading">Their version (saved)</h4>
+                    <p class="diff-title" data-role="their-title"></p>
+                    <pre class="diff-pane" data-role="their-content" tabindex="0"></pre>
+                </section>
+                <section aria-label="Your version">
+                    <h4 class="share-heading">Your version (not saved)</h4>
+                    <p class="diff-title" data-role="my-title"></p>
+                    <pre class="diff-pane" data-role="my-content" tabindex="0"></pre>
+                </section>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="cancel">Cancel</button>
+                <button type="button" class="secondary" data-action="discard">Keep their version</button>
+                <button type="button" class="danger" data-action="overwrite">Overwrite with mine</button>
+            </div>
+        `;
+        body.querySelector('[data-role="their-title"]').textContent = latest.title || "";
+        body.querySelector('[data-role="my-title"]').textContent = mine.title || "";
+        renderLineDiff(
+            body.querySelector('[data-role="their-content"]'),
+            body.querySelector('[data-role="my-content"]'),
+            latest.content || "",
+            mine.content || "",
+        );
+
+        let deactivate = () => {};
+        const close = (result) => {
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+        for (const action of ["cancel", "discard", "overwrite"]) {
+            body.querySelector(`[data-action="${action}"]`).addEventListener("click", () => close(action));
+        }
+
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        backdrop.querySelector(".modal-dialog").classList.add("modal-dialog--wide");
+        deactivate = activateDialog(backdrop, () => close("cancel"));
+        body.querySelector('[data-action="cancel"]').focus();
+    });
+}
+
+// Which lines of two texts differ (longest common subsequence). Returns one flag per line of each side.
+function diffLines(leftText, rightText) {
+    const left = leftText.split("\n");
+    const right = rightText.split("\n");
+    const leftChanged = new Array(left.length).fill(true);
+    const rightChanged = new Array(right.length).fill(true);
+
+    // Very long texts are shown without highlighting rather than freezing the page.
+    if (left.length * right.length <= 250000) {
+        const table = Array.from({length: left.length + 1}, () => new Uint16Array(right.length + 1));
+        for (let i = left.length - 1; i >= 0; i -= 1) {
+            for (let j = right.length - 1; j >= 0; j -= 1) {
+                table[i][j] = left[i] === right[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+            }
+        }
+        let i = 0;
+        let j = 0;
+        while (i < left.length && j < right.length) {
+            if (left[i] === right[j]) {
+                leftChanged[i] = false;
+                rightChanged[j] = false;
+                i += 1;
+                j += 1;
+            } else if (table[i + 1][j] >= table[i][j + 1]) {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+    } else {
+        leftChanged.fill(false);
+        rightChanged.fill(false);
+    }
+
+    return {left, right, leftChanged, rightChanged};
+}
+
+// Fills two panes with the texts, marking removed lines on the left and added lines on the right.
+// Lines are set as text, never as HTML.
+function renderLineDiff(leftPane, rightPane, leftText, rightText) {
+    const diff = diffLines(leftText, rightText);
+    const fill = (pane, lines, changed, className, label) => {
+        pane.innerHTML = "";
+        lines.forEach((line, index) => {
+            const row = document.createElement("span");
+            row.className = changed[index] ? `diff-line ${className}` : "diff-line";
+            if (changed[index]) {
+                row.setAttribute("aria-label", `${label}: ${line}`);
+            }
+            row.textContent = line === "" ? " " : line;
+            pane.appendChild(row);
+        });
+    };
+    fill(leftPane, diff.left, diff.leftChanged, "diff-line--removed", "Only here");
+    fill(rightPane, diff.right, diff.rightChanged, "diff-line--added", "Only here");
+
+    return diff.leftChanged.some(Boolean) || diff.rightChanged.some(Boolean);
+}
+
+function openHistoryDialog(note, canEdit) {
+    return new Promise((resolve) => {
+        const {backdrop, content} = buildModalShell("History");
+
+        const body = document.createElement("div");
+        body.className = "modal-form";
+        body.innerHTML = `
+            <p class="modal-message share-note-title"></p>
+            <div class="history-layout">
+                <div>
+                    <h4 class="share-heading">Revisions</h4>
+                    <ul class="history-list" data-role="list" aria-label="Revisions" aria-live="polite"></ul>
+                </div>
+                <div data-role="detail" class="history-detail">
+                    <p class="share-empty">Choose a revision to compare it with the current text.</p>
+                </div>
+            </div>
+            <p class="share-feedback" role="alert"></p>
+            <div class="modal-actions">
+                <button type="button" class="secondary" data-action="close">Close</button>
+            </div>
+        `;
+        body.querySelector(".share-note-title").textContent = note.title || "";
+
+        const listEl = body.querySelector('[data-role="list"]');
+        const detailEl = body.querySelector('[data-role="detail"]');
+        const feedbackEl = body.querySelector(".share-feedback");
+        let currentVersion = note.version;
+        let current = {title: note.title || "", content: note.content || ""};
+        let closed = false;
+        let deactivate = () => {};
+        const close = (result) => {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            backdrop.remove();
+            deactivate();
+            resolve(result);
+        };
+        const lost = (error) => {
+            if (error?.status === 403 || (error?.status === 404 && error.message === "Note not found.")) {
+                close({error});
+                return true;
+            }
+            return false;
+        };
+
+        const kindLabel = (revision) => ({create: "created", update: "edited", restore: `restored from revision ${revision.restored_from}`}[revision.kind] || revision.kind);
+
+        async function showRevision(revision, button) {
+            for (const other of listEl.querySelectorAll("button")) {
+                other.setAttribute("aria-pressed", other === button ? "true" : "false");
+            }
+            detailEl.innerHTML = `<p class="share-empty">Loading…</p>`;
+            setFeedback(feedbackEl, "");
+            let full;
+            try {
+                full = await api(`/api/notes/${note.id}/revisions/${revision.revision}`);
+            } catch (error) {
+                if (!lost(error)) {
+                    detailEl.innerHTML = `<p class="share-empty share-feedback--error"></p>`;
+                    detailEl.firstElementChild.textContent = error.status === 404 ? "This revision is no longer kept." : "Could not load this revision.";
+                }
+                return;
+            }
+            if (closed) {
+                return;
+            }
+
+            const isCurrent = revision.revision === currentVersion;
+            detailEl.innerHTML = `
+                <div class="diff-columns">
+                    <section aria-label="Selected revision">
+                        <h4 class="share-heading" data-role="left-heading"></h4>
+                        <p class="diff-title" data-role="left-title"></p>
+                        <pre class="diff-pane" data-role="left" tabindex="0"></pre>
+                    </section>
+                    <section aria-label="Current text">
+                        <h4 class="share-heading">Current (revision ${Number(currentVersion)})</h4>
+                        <p class="diff-title" data-role="right-title"></p>
+                        <pre class="diff-pane" data-role="right" tabindex="0"></pre>
+                    </section>
+                </div>
+                <p class="share-empty" data-role="summary"></p>
+                ${canEdit && !isCurrent ? `<button type="button" data-action="restore">Restore revision ${Number(revision.revision)}</button>` : ""}
+            `;
+            detailEl.querySelector('[data-role="left-heading"]').textContent = `Revision ${revision.revision}`;
+            detailEl.querySelector('[data-role="left-title"]').textContent = full.title || "";
+            detailEl.querySelector('[data-role="right-title"]').textContent = current.title;
+            const differs = renderLineDiff(
+                detailEl.querySelector('[data-role="left"]'),
+                detailEl.querySelector('[data-role="right"]'),
+                full.content || "",
+                current.content,
+            );
+            const sameTitle = (full.title || "") === current.title;
+            detailEl.querySelector('[data-role="summary"]').textContent = isCurrent
+                ? "This is the current text."
+                : (differs || !sameTitle ? "Highlighted lines differ between the two." : "Same text as the current revision.");
+
+            detailEl.querySelector('[data-action="restore"]')?.addEventListener("click", async () => {
+                const confirmed = await openConfirmModal({
+                    title: "Restore revision",
+                    message: `Replace the current text with revision ${revision.revision}? The current text stays in the history.`,
+                    confirmLabel: "Restore",
+                });
+                if (!confirmed || closed) {
+                    return;
+                }
+                try {
+                    await api(`/api/notes/${note.id}/revisions/${revision.revision}/restore`, {
+                        method: "POST",
+                        headers: {"If-Match": `"${currentVersion}"`},
+                    });
+                    close({restored: revision.revision});
+                } catch (error) {
+                    if (lost(error)) {
+                        return;
+                    }
+                    // Somebody saved in between: show what is current now before anything is replaced.
+                    setFeedback(feedbackEl, error.status === 412 ? "The note was changed in the meantime. The history was reloaded; check the current text and restore again if you still want to." : error.message, true);
+                    await load();
+                }
+            });
+        }
+
+        async function load() {
+            listEl.innerHTML = `<li class="share-empty">Loading…</li>`;
+            detailEl.innerHTML = `<p class="share-empty">Choose a revision to compare it with the current text.</p>`;
+            try {
+                const [latest, history] = await Promise.all([
+                    api(`/api/notes/${note.id}`),
+                    api(`/api/notes/${note.id}/revisions?itemsPerPage=100`),
+                ]);
+                if (closed) {
+                    return;
+                }
+                current = {title: latest.title || "", content: latest.content || ""};
+                currentVersion = latest.version;
+                listEl.innerHTML = "";
+                const items = Array.isArray(history?.items) ? history.items : [];
+                if (items.length === 0) {
+                    listEl.innerHTML = `<li class="share-empty">No earlier revisions are kept for this note.</li>`;
+                    return;
+                }
+                for (const revision of items) {
+                    const item = document.createElement("li");
+                    const button = document.createElement("button");
+                    button.type = "button";
+                    button.className = "history-item";
+                    button.setAttribute("aria-pressed", "false");
+                    const who = revision.actor?.email || "a deleted account";
+                    button.innerHTML = `<strong></strong><span></span><span></span>`;
+                    button.children[0].textContent = `Revision ${revision.revision}${revision.revision === currentVersion ? " (current)" : ""}`;
+                    button.children[1].textContent = `${kindLabel(revision)} by ${who}`;
+                    button.children[2].textContent = formatTimestamp(revision.created_at);
+                    button.addEventListener("click", () => showRevision(revision, button));
+                    item.appendChild(button);
+                    listEl.appendChild(item);
+                }
+            } catch (error) {
+                if (closed || lost(error)) {
+                    return;
+                }
+                listEl.innerHTML = `<li><p class="share-empty share-feedback--error">Could not load the history.</p><button type="button" class="secondary" data-action="retry">Retry</button></li>`;
+                listEl.querySelector('[data-action="retry"]').addEventListener("click", load);
+            }
+        }
+
+        body.querySelector('[data-action="close"]').addEventListener("click", () => close(null));
+        backdrop.addEventListener("click", (event) => {
+            if (event.target === backdrop) {
+                close(null);
+            }
+        });
+
+        content.appendChild(body);
+        document.body.appendChild(backdrop);
+        backdrop.querySelector(".modal-dialog").classList.add("modal-dialog--wide");
+        deactivate = activateDialog(backdrop, () => close(null));
+        body.querySelector('[data-action="close"]').focus();
         load();
     });
 }

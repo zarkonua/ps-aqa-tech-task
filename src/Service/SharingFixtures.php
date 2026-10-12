@@ -9,6 +9,7 @@ use App\Entity\AuditEvent;
 use App\Entity\Category;
 use App\Entity\Note;
 use App\Entity\NoteAttachment;
+use App\Entity\NoteRevision;
 use App\Entity\NoteShare;
 use App\Entity\Tag;
 use App\Entity\User;
@@ -25,7 +26,7 @@ use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
  */
 final class SharingFixtures
 {
-    public const VERSION = 6;
+    public const VERSION = 7;
     public const SEARCH_NOTES = 60;
     public const BULK_NOTES = 105;
     public const DEFAULT_PASSWORD = 'Fixture-Passw0rd!';
@@ -145,15 +146,24 @@ final class SharingFixtures
 
         foreach (self::NOTES as $key => $shares) {
             [$tagKeys, $categoryKey] = self::NOTE_TAXONOMY[$key] ?? [[], null];
-            $note = (new Note())
-                ->setOwner($users['owner'])
-                ->setTitle(sprintf('[%s] %s note', $runId, str_replace('_', ' ', $key)))
-                ->setContent(sprintf('Fixture note "%s" for run "%s".', $key, $runId));
+            $title = sprintf('[%s] %s note', $runId, str_replace('_', ' ', $key));
+            $note = (new Note())->setOwner($users['owner']);
             self::forceId($note, self::id($runId, 'note', $key));
+
+            // "shared_1" has a history: two earlier texts (by the owner, then the editor) before the current one.
+            $drafts = 'shared_1' === $key
+                ? [['owner', $title.' (first draft)', "First draft.\nLine that will be removed.\n<b>markup</b> stays text."], ['editor', $title, "Second draft: ünïcödé, 日本語, 💡.\nA line added by the editor."]]
+                : [];
+            foreach ($drafts as $index => [$persona, $draftTitle, $draftContent]) {
+                $note->setTitle($draftTitle)->setContent($draftContent)->setVersion($index + 1);
+                $this->entityManager->persist(new NoteRevision($note, $index + 1, 0 === $index ? NoteRevision::CREATED : NoteRevision::UPDATED, $users[$persona]->getId()));
+            }
+            $note->setTitle($title)->setContent(sprintf('Fixture note "%s" for run "%s".', $key, $runId))->setVersion(count($drafts) + 1);
+            $this->entityManager->persist(new NoteRevision($note, $note->getVersion(), [] === $drafts ? NoteRevision::CREATED : NoteRevision::UPDATED, $users['owner']->getId()));
             $this->entityManager->persist($note);
             $note->replaceTags(array_map(static fn (string $tagKey): Tag => $items['tags']['owner'][$tagKey], $tagKeys));
             $note->setCategory(null === $categoryKey ? null : $items['categories']['owner'][$categoryKey]);
-            $manifest['notes'][$key] = ['id' => $note->getId(), 'title' => $note->getTitle(), 'shares' => [], 'tags' => $tagKeys, 'category' => $categoryKey];
+            $manifest['notes'][$key] = ['id' => $note->getId(), 'title' => $note->getTitle(), 'version' => $note->getVersion(), 'shares' => [], 'tags' => $tagKeys, 'category' => $categoryKey];
 
             foreach ($shares as $persona => $role) {
                 $share = new NoteShare($note, $users[$persona], $role, self::id($runId, 'share', $key.'/'.$persona));
@@ -192,6 +202,7 @@ final class SharingFixtures
             $note->replaceTags(array_map(static fn (string $tagKey): Tag => $items['tags']['owner'][$tagKey], $definition['tags']));
             $note->setCategory(null === $definition['category'] ? null : $items['categories']['owner'][$definition['category']]);
             $this->entityManager->persist($note);
+            $this->entityManager->persist(new NoteRevision($note, 1, NoteRevision::CREATED, $users[$definition['owner']]->getId()));
             foreach ($definition['shares'] as $persona => $role) {
                 $this->entityManager->persist(new NoteShare($note, $users[$persona], ShareRole::from($role), self::id($runId, 'share', $key.'/'.$persona)));
             }
@@ -205,6 +216,7 @@ final class SharingFixtures
             $note = (new Note())->setOwner($users['owner'])->setTitle(sprintf('[%s] bulk %03d', $runId, $i))->setContent('Bulk fixture note.');
             self::forceId($note, self::id($runId, 'note', $key));
             $this->entityManager->persist($note);
+            $this->entityManager->persist(new NoteRevision($note, 1, NoteRevision::CREATED, $users['owner']->getId()));
             $timestamps[$note->getId()] = ['2026-01-10T00:00:00+00:00', '2026-01-10T00:00:00+00:00'];
             $manifest['bulk_notes'][$key] = $note->getId();
         }

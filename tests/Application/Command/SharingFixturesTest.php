@@ -6,6 +6,7 @@ namespace App\Tests\Application\Command;
 
 use App\Entity\Note;
 use App\Entity\NoteAttachment;
+use App\Entity\NoteRevision;
 use App\Entity\NoteShare;
 use App\Entity\Tag;
 use App\Entity\User;
@@ -50,7 +51,8 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame([], $first['notes']['private_1']['shares']);
         self::assertSame(['viewer' => 'viewer', 'editor' => 'editor'], array_map(static fn (array $share): string => $share['role'], $first['notes']['shared_1']['shares']));
         self::assertSame('owner.'.self::RUN_A.'@qa-fixtures.test', $first['users']['owner']['email']);
-        self::assertSame(6, $first['version']);
+        self::assertSame(7, $first['version']);
+        self::assertSame([1, 3], [$first['notes']['private_1']['version'], $first['notes']['shared_1']['version']]);
         self::assertSame(['pdf', 'png', 'txt'], array_keys($first['notes']['shared_1']['attachments']));
         self::assertSame([], $first['notes']['private_1']['attachments']);
         self::assertCount(105, $first['bulk_notes']);
@@ -83,6 +85,12 @@ final class SharingFixturesTest extends KernelTestCase
         self::assertSame($first['search_notes']['search_07']['updated_at'], $searchNote->getUpdatedAt()->format(\DATE_ATOM));
         self::assertSame($first['search_notes']['search_07']['title'], $searchNote->getTitle());
         self::assertSame('Personal', $em->find(Note::class, $first['notes']['shared_1']['id'])->getCategory()->getName());
+
+        $history = $em->getRepository(NoteRevision::class)->findBy(['note' => $first['notes']['shared_1']['id']], ['revision' => 'ASC']);
+        self::assertSame([1, 2, 3], array_map(static fn (NoteRevision $r): int => $r->getRevision(), $history));
+        self::assertSame([$first['users']['owner']['id'], $first['users']['editor']['id'], $first['users']['owner']['id']], array_map(static fn (NoteRevision $r): ?string => $r->getActorId(), $history));
+        self::assertSame($first['notes']['shared_1']['title'], $history[2]->getTitle());
+        self::assertSame(1, $em->getRepository(NoteRevision::class)->count(['note' => $first['bulk_notes']['bulk_001']]));
 
         // Both runs have their three files; reseeding did not leave the old ones behind.
         $storage = self::getContainer()->get(AttachmentStorage::class);

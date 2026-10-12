@@ -9,6 +9,7 @@ use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
 use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Post;
 use ApiPlatform\Metadata\Put;
 use ApiPlatform\Metadata\QueryParameter;
@@ -110,6 +111,13 @@ use Symfony\Component\Validator\Constraints as Assert;
             securityMessage: 'Your role does not allow editing this note.',
             processor: NotePersistProcessor::class,
         ),
+        new Patch(
+            uriTemplate: '/api/notes/{id}',
+            security: "is_granted('NOTE_EDIT', object)",
+            securityMessage: 'Your role does not allow editing this note.',
+            processor: NotePersistProcessor::class,
+            description: 'Changes the title and/or the content. Requires an If-Match header with the version (ETag) the change is based on: 428 without it, 412 when the note has changed since.',
+        ),
         new Delete(
             uriTemplate: '/api/notes/{id}',
             security: "is_granted('NOTE_DELETE', object)",
@@ -165,6 +173,12 @@ class Note
     #[Groups(['note:read'])]
     #[SerializedName('updated_at')]
     private \DateTimeImmutable $updatedAt;
+
+    /** Number of the latest revision. Moves only when title or content change. */
+    #[ORM\Column(type: 'integer', options: ['default' => 1])]
+    #[Groups(['note:read'])]
+    #[ApiProperty(description: 'Revision number of the note; also sent as the ETag. Send it back in If-Match to avoid overwriting newer changes.', schema: ['type' => 'integer', 'minimum' => 1, 'readOnly' => true])]
+    private int $version = 1;
 
     /** The current user's role on this note; not persisted, set when the note is serialized. */
     #[Groups(['note:read'])]
@@ -301,6 +315,31 @@ class Note
 
         foreach ($wanted as $tag) {
             $this->tags->add($tag);
+        }
+
+        return $this;
+    }
+
+    public function getVersion(): int
+    {
+        return $this->version;
+    }
+
+    public function setVersion(int $version): self
+    {
+        $this->version = $version;
+
+        return $this;
+    }
+
+    /**
+     * An update keeps the creation time, and a save that changes nothing keeps the update time too.
+     */
+    public function keepTimestampsOf(self $stored, bool $includingUpdate): self
+    {
+        $this->createdAt = $stored->createdAt;
+        if ($includingUpdate) {
+            $this->updatedAt = $stored->updatedAt;
         }
 
         return $this;

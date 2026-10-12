@@ -23,6 +23,7 @@ class AuditEvent
     public const SHARE_REVOKED = 'share.revoked';
     public const SHARE_REMOVED_WITH_NOTE = 'share.removed_with_note';
     public const NOTE_DELETED = 'note.deleted';
+    public const NOTE_RESTORED = 'note.restored';
     public const ATTACHMENT_UPLOADED = 'attachment.uploaded';
     public const ATTACHMENT_DELETED = 'attachment.deleted';
     public const TAG_CREATED = 'tag.created';

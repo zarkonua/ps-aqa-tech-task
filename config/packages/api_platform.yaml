@@ -11,6 +11,8 @@ api_platform:
                 type: header
     formats:
         json: ['application/json']
+    patch_formats:
+        json: ['application/merge-patch+json', 'application/json']
     defaults:
         stateless: true
         cache_headers:

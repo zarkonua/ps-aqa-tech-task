@@ -34,6 +34,7 @@ Key features:
 - Password reset and account settings: reset by emailed link, change password, change email with confirmation, time zone. See [Password Reset and Account Settings](docs/password-reset-account-settings.md).
 - Bulk operations: set category, add or remove tags, or delete up to 100 notes at once, with per-note results. See [Bulk Operations](docs/bulk-operations.md).
 - File attachments: up to five PNG, JPG, PDF, TXT or CSV files per note. See [File Attachments](docs/file-attachments.md).
+- Version history: every real save of a note is a revision that can be compared and restored; stale saves are refused. See [Notes Version History](docs/notes-version-history.md).
 
 ## Tech Stack
 
