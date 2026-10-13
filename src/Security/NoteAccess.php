@@ -8,6 +8,8 @@ use App\Entity\Note;
 use App\Entity\User;
 use App\Enum\ShareRole;
 use App\Repository\NoteShareRepository;
+use App\Service\BugCatalog;
+use App\Service\BugSwitch;
 
 /**
  * Single source of truth for "what may this user do with this note".
@@ -20,6 +22,7 @@ final class NoteAccess
 
     public function __construct(
         private readonly NoteShareRepository $shares,
+        private readonly BugSwitch $bugs,
     ) {
     }
 
@@ -49,6 +52,10 @@ final class NoteAccess
 
     public function canEdit(Note $note, User $user): bool
     {
-        return in_array($this->roleFor($note, $user), [self::ROLE_OWNER, ShareRole::Editor->value], true);
+        $role = $this->roleFor($note, $user);
+
+        return in_array($role, [self::ROLE_OWNER, ShareRole::Editor->value], true)
+            // Injected defect BUG-002, only for test runs that have it switched on.
+            || (ShareRole::Viewer->value === $role && $this->bugs->isActive(BugCatalog::AUTH_BYPASS, $user));
     }
 }

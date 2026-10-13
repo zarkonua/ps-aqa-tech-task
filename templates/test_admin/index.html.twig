@@ -41,6 +41,24 @@
                 <div id="runs-list" class="share-list" aria-live="polite"></div>
             </div>
 
+            <div id="challenges-panel" class="panel section-card hidden">
+                <h2 id="challenges-title" tabindex="-1">Challenges</h2>
+                <p><small>Challenge IDs are safe to log. What each one does is in the catalog (<code>GET /test-admin/bugs</code>), which must stay with the runner.</small></p>
+                <form id="challenges-form" novalidate>
+                    <fieldset class="run-challenges">
+                        <legend>Switched on for this run</legend>
+                        <div id="challenges-list"></div>
+                    </fieldset>
+                    <div class="kanban-actions">
+                        <button type="submit">Apply selection</button>
+                        <button type="button" id="challenges-check" class="secondary">Check run</button>
+                        <button type="button" id="challenges-close" class="secondary">Close</button>
+                    </div>
+                </form>
+                <p id="challenges-feedback" class="share-feedback" role="status" aria-live="polite"></p>
+                <div id="oracle-results" aria-live="polite"></div>
+            </div>
+
             <div id="manifest-panel" class="panel section-card hidden">
                 <h2 id="manifest-title">Manifest</h2>
                 <pre id="manifest-body" class="diff-pane" tabindex="0"></pre>

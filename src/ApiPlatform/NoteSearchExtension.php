@@ -8,6 +8,8 @@ use ApiPlatform\Doctrine\Orm\Extension\QueryCollectionExtensionInterface;
 use ApiPlatform\Doctrine\Orm\Util\QueryNameGeneratorInterface;
 use ApiPlatform\Metadata\Operation;
 use App\Entity\Note;
+use App\Service\BugCatalog;
+use App\Service\BugSwitch;
 use App\State\NoteCollectionProvider;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\QueryBuilder;
@@ -18,6 +20,11 @@ use Doctrine\ORM\QueryBuilder;
  */
 final class NoteSearchExtension implements QueryCollectionExtensionInterface
 {
+    public function __construct(
+        private readonly BugSwitch $bugs,
+    ) {
+    }
+
     public function applyToCollection(QueryBuilder $queryBuilder, QueryNameGeneratorInterface $queryNameGenerator, string $resourceClass, ?Operation $operation = null, array $context = []): void
     {
         if (Note::class !== $resourceClass) {
@@ -40,11 +47,13 @@ final class NoteSearchExtension implements QueryCollectionExtensionInterface
         $order = $search['order'] ?? null;
         $legacySort = $context['filters']['sort'] ?? null;
         if (null !== $sortBy || null !== $order || !is_array($legacySort) || [] === $legacySort) {
+            $direction = $order ?? (null === $sortBy || 'title' !== $sortBy ? 'desc' : 'asc');
+            // Injected defect BUG-005, only for test runs that have it switched on.
+            if ('title' === $sortBy && $this->bugs->isActive(BugCatalog::SORTING)) {
+                $direction = 'asc' === $direction ? 'desc' : 'asc';
+            }
             $queryBuilder->resetDQLPart('orderBy');
-            $queryBuilder->orderBy(
-                sprintf('%s.%s', $rootAlias, $sortBy ?? 'updatedAt'),
-                strtoupper($order ?? (null === $sortBy || 'title' !== $sortBy ? 'desc' : 'asc')),
-            );
+            $queryBuilder->orderBy(sprintf('%s.%s', $rootAlias, $sortBy ?? 'updatedAt'), strtoupper($direction));
         }
 
         // Notes with equal sort values keep one fixed order, so pages never overlap or skip.

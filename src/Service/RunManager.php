@@ -99,7 +99,8 @@ final class RunManager
             // Seeding starts by purging and leaves nothing loaded, so the run is fetched again afterwards.
             $manifest = $this->seedData($runId, $run->getFixture(), $run->getSeed(), $resets);
             $run = $this->find($runId) ?? throw new RunConflict(sprintf('Run "%s" no longer exists.', $runId));
-            $run->countReset()->setClockOffsetSeconds(0)->setManifest($manifest, self::semanticHash($manifest, $runId), SharingFixtures::VERSION);
+            // A reset is also the way back to a run without injected defects.
+            $run->countReset()->setClockOffsetSeconds(0)->setActiveBugs([])->setManifest($manifest, self::semanticHash($manifest, $runId), SharingFixtures::VERSION);
             $this->audit->record('run.reset', null, null, metadata: ['resets' => $resets], subjectId: $runId);
             $this->entityManager->flush();
             $this->clock->forget();
@@ -122,6 +123,23 @@ final class RunManager
             $this->clock->forget();
 
             return $this->mailhog->deleteMailTo($emails);
+        });
+    }
+
+    /**
+     * Switches on exactly these catalogued defects for the run (none, for an empty list).
+     *
+     * @param list<string> $bugIds IDs from BugCatalog, already checked for conflicts
+     */
+    public function setBugs(TestRun $run, array $bugIds): TestRun
+    {
+        return $this->locked($run->getId(), function () use ($run, $bugIds): TestRun {
+            $this->entityManager->refresh($run);
+            // Deliberately not written to the application's audit log, which the run's own administrator can read.
+            $run->setActiveBugs($bugIds);
+            $this->entityManager->flush();
+
+            return $run;
         });
     }
 

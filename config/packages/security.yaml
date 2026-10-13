@@ -33,6 +33,11 @@ security:
             provider: app_user_provider
             jwt: ~
 
+        # The runner's API checks its own bearer tokens (TestAdminController); users and sessions play no part.
+        test_admin:
+            pattern: ^/test-admin
+            security: false
+
         main:
             lazy: true
 

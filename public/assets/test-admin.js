@@ -6,6 +6,7 @@ const tokenSection = document.getElementById("token-section");
 const runsSection = document.getElementById("runs-section");
 const runsListEl = document.getElementById("runs-list");
 const manifestPanel = document.getElementById("manifest-panel");
+const challengesPanel = document.getElementById("challenges-panel");
 
 function setStatus(message, isError = false) {
     statusEl.textContent = message;
@@ -40,6 +41,7 @@ async function call(path, options = {}) {
 function showSignIn(message) {
     sessionStorage.removeItem(TOKEN_KEY);
     runsSection.classList.add("hidden");
+    challengesPanel.classList.add("hidden");
     tokenSection.classList.remove("hidden");
     setStatus(message || "", Boolean(message));
     document.getElementById("admin-token").focus();
@@ -60,7 +62,8 @@ function runRow(run) {
     const offset = run.clock_offset_seconds;
     row.querySelector(".share-email").textContent =
         `${run.run_id} — ${run.fixture}, seed ${run.seed}, fixture v${run.fixture_version}, ${run.resets} reset${run.resets === 1 ? "" : "s"}`
-        + `${offset ? `, clock +${offset}s (${run.clock_now})` : ""}, hash ${run.manifest_hash.slice(0, 12)}…`;
+        + `${offset ? `, clock +${offset}s (${run.clock_now})` : ""}`
+        + `${run.active_bug_count ? `, ${run.active_bug_count} challenge${run.active_bug_count === 1 ? "" : "s"} on` : ""}, hash ${run.manifest_hash.slice(0, 12)}…`;
 
     const actions = row.querySelector(".kanban-actions");
     const add = (label, handler, className = "secondary") => {
@@ -93,12 +96,14 @@ function runRow(run) {
         manifestPanel.classList.remove("hidden");
         manifestPanel.scrollIntoView({block: "nearest"});
     });
+    add("Challenges", () => openChallenges(run.run_id));
     add("Reset", async () => {
         if (!confirmAction(`Reset run ${run.run_id}? Everything tests changed in it is discarded.`)) {
             return;
         }
         const data = await call(`/runs/${run.run_id}/reset`, {method: "POST"});
         setStatus(`Run ${run.run_id} reset${data.mail_deleted === null ? "" : `; ${data.mail_deleted} captured mail(s) deleted`}.`);
+        challengesPanel.classList.add("hidden");
         await loadRuns();
     });
     add("+1 hour", async () => {
@@ -117,12 +122,121 @@ function runRow(run) {
         }
         await call(`/runs/${run.run_id}`, {method: "DELETE"});
         manifestPanel.classList.add("hidden");
+        challengesPanel.classList.add("hidden");
         setStatus(`Run ${run.run_id} deleted.`);
         await loadRuns();
     }, "danger");
 
     return row;
 }
+
+// Injected defects, shown by their opaque challenge IDs only.
+let challengeIds = null;
+let challengesRun = null;
+
+function setChallengesFeedback(message, isError = false) {
+    const feedback = document.getElementById("challenges-feedback");
+    feedback.textContent = message;
+    feedback.classList.toggle("share-feedback--error", isError);
+}
+
+async function openChallenges(runId) {
+    if (challengeIds === null) {
+        challengeIds = (await call("/bugs")).bugs.map((bug) => bug.challenge_id);
+    }
+    const state = await call(`/runs/${runId}/bugs`);
+    const active = new Set(state.active_bugs.map((bug) => bug.challenge_id));
+    challengesRun = runId;
+
+    const list = document.getElementById("challenges-list");
+    list.innerHTML = "";
+    for (const id of challengeIds) {
+        const label = document.createElement("label");
+        label.className = "run-challenge";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.value = id;
+        box.checked = active.has(id);
+        label.append(box, ` ${id}`);
+        list.appendChild(label);
+    }
+    document.getElementById("challenges-title").textContent = `Challenges of ${runId}`;
+    document.getElementById("oracle-results").innerHTML = "";
+    setChallengesFeedback("");
+    challengesPanel.classList.remove("hidden");
+    challengesPanel.scrollIntoView({block: "nearest"});
+    document.getElementById("challenges-title").focus();
+}
+
+async function challengesAction(button, action) {
+    button.disabled = true;
+    try {
+        await action();
+    } catch (error) {
+        if (error.status === 401) {
+            showSignIn("The token was not accepted.");
+            return;
+        }
+        setChallengesFeedback(error.message, true);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+document.getElementById("challenges-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const selected = [...document.querySelectorAll("#challenges-list input:checked")].map((box) => box.value);
+    challengesAction(event.target.querySelector('button[type="submit"]'), async () => {
+        const question = selected.length
+            ? `Switch on ${selected.length} challenge(s) for run ${challengesRun}? The run will then misbehave on purpose.`
+            : `Switch off all challenges for run ${challengesRun}?`;
+        if (!confirmAction(question)) {
+            return;
+        }
+        if (selected.length) {
+            await call(`/runs/${challengesRun}/bugs`, {method: "POST", body: JSON.stringify({bug_ids: selected})});
+        } else {
+            await call(`/runs/${challengesRun}/bugs`, {method: "DELETE"});
+        }
+        setChallengesFeedback(selected.length ? `${selected.length} challenge(s) switched on.` : "All challenges switched off.");
+        document.getElementById("oracle-results").innerHTML = "";
+        await loadRuns();
+    });
+});
+
+document.getElementById("challenges-check").addEventListener("click", (event) => {
+    challengesAction(event.currentTarget, async () => {
+        if (!confirmAction(`Check run ${challengesRun}? The checks edit a note and leave notifications behind; reset the run afterwards.`)) {
+            return;
+        }
+        setChallengesFeedback("Checking…");
+        const data = await call(`/runs/${challengesRun}/oracle-results`);
+        const table = document.createElement("table");
+        table.className = "run-oracle";
+        table.innerHTML = "<thead><tr><th scope=\"col\">Challenge</th><th scope=\"col\">Switched on</th><th scope=\"col\">Expected</th><th scope=\"col\">Actual</th><th scope=\"col\">Result</th></tr></thead>";
+        const body = document.createElement("tbody");
+        for (const result of data.results) {
+            const row = document.createElement("tr");
+            const verdict = result.error || (result.manifested ? "defect shows" : "correct") + (result.consistent ? "" : " — not as switched");
+            for (const value of [result.challenge_id, result.active ? "yes" : "no", JSON.stringify(result.expected), JSON.stringify(result.actual), verdict]) {
+                const cell = document.createElement("td");
+                cell.textContent = value;
+                row.appendChild(cell);
+            }
+            body.appendChild(row);
+        }
+        table.appendChild(body);
+        const target = document.getElementById("oracle-results");
+        target.innerHTML = "";
+        target.appendChild(table);
+        setChallengesFeedback(
+            data.consistent ? "The run behaves exactly as switched." : "The run does not behave as switched. See the rows marked below.",
+            !data.consistent,
+        );
+    });
+});
+
+document.getElementById("challenges-close").addEventListener("click", () => challengesPanel.classList.add("hidden"));
 
 async function loadRuns() {
     runsListEl.innerHTML = `<p class="share-empty">Loading…</p>`;

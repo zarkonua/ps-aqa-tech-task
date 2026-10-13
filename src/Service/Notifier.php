@@ -39,6 +39,7 @@ final class Notifier
         private readonly NoteAccess $access,
         private readonly LoggerInterface $logger,
         private readonly RunClock $clock,
+        private readonly BugSwitch $bugs,
     ) {
     }
 
@@ -65,6 +66,10 @@ final class Notifier
     public function shareGranted(User $recipient, User $actor, string $shareId, Note $note): void
     {
         $this->notify($recipient, Notification::SHARE_GRANTED, 'share_granted:'.$shareId, $actor, Notification::RESOURCE_NOTE, (string) $note->getId());
+        // Injected defect BUG-007, only for test runs that have it switched on: the event is delivered twice.
+        if ($this->bugs->isActive(BugCatalog::DUPLICATE_NOTIFICATION, $actor)) {
+            $this->notify($recipient, Notification::SHARE_GRANTED, 'share_granted:'.$shareId.':again', $actor, Notification::RESOURCE_NOTE, (string) $note->getId());
+        }
     }
 
     public function shareRevoked(User $recipient, User $actor, string $shareId, Note $note): void

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Controller;
 
 use App\Entity\TestRun;
+use App\Service\BugCatalog;
+use App\Service\BugOracle;
 use App\Service\RunConflict;
 use App\Service\RunManager;
 use App\Service\SharingFixtures;
@@ -24,6 +26,7 @@ final class TestAdminController extends ApiController
 {
     public function __construct(
         private readonly RunManager $runs,
+        private readonly BugOracle $oracle,
         #[Autowire('%kernel.environment%')]
         private readonly string $environment,
         #[Autowire('%env(default::TEST_ADMIN_TOKEN)%')]
@@ -151,6 +154,89 @@ final class TestAdminController extends ApiController
         });
     }
 
+    #[Route('/test-admin/bugs', name: 'test_admin_bugs', methods: ['GET'])]
+    public function bugCatalog(Request $request): JsonResponse
+    {
+        return $this->authorized($request, null, fn (): JsonResponse => $this->json(['bugs' => BugCatalog::all()]));
+    }
+
+    #[Route('/test-admin/runs/{id}/bugs', name: 'test_admin_run_bugs', methods: ['GET'])]
+    public function bugs(string $id, Request $request): JsonResponse
+    {
+        return $this->authorized($request, $id, fn (TestRun $run): JsonResponse => $this->json(self::bugData($run)));
+    }
+
+    #[Route('/test-admin/runs/{id}/bugs', name: 'test_admin_run_bugs_set', methods: ['POST'])]
+    public function setBugs(string $id, Request $request): JsonResponse
+    {
+        return $this->authorized($request, $id, function (TestRun $run) use ($request): JsonResponse {
+            $payload = $this->objectPayload($request);
+            $violations = $this->unexpectedFields($payload, ['bug_ids']);
+            $given = $payload['bug_ids'] ?? null;
+            if (!is_array($given) || !array_is_list($given) || [] === $given) {
+                $violations[] = ['propertyPath' => 'bug_ids', 'message' => 'A non-empty list of bug or challenge IDs is required. Use DELETE to switch all defects off.'];
+                $given = [];
+            }
+
+            $bugIds = [];
+            foreach ($given as $index => $value) {
+                $bugId = is_string($value) ? BugCatalog::resolve($value) : null;
+                if (null === $bugId) {
+                    $violations[] = ['propertyPath' => sprintf('bug_ids[%d]', $index), 'message' => 'Unknown bug or challenge ID.'];
+                } else {
+                    $bugIds[$bugId] = true;
+                }
+            }
+            $bugIds = array_keys($bugIds);
+            foreach ([] === $violations ? BugCatalog::conflictsAmong($bugIds) : [] as [$a, $b]) {
+                $violations[] = ['propertyPath' => 'bug_ids', 'message' => sprintf('%s and %s cannot be switched on together: one hides the other.', $a, $b)];
+            }
+            if ([] !== $violations) {
+                return $this->validationError($violations);
+            }
+
+            sort($bugIds);
+
+            return $this->json(self::bugData($this->runs->setBugs($run, $bugIds)));
+        });
+    }
+
+    #[Route('/test-admin/runs/{id}/bugs', name: 'test_admin_run_bugs_clear', methods: ['DELETE'])]
+    public function clearBugs(string $id, Request $request): JsonResponse
+    {
+        return $this->authorized($request, $id, function (TestRun $run): JsonResponse {
+            $this->runs->setBugs($run, []);
+
+            return new JsonResponse(null, Response::HTTP_NO_CONTENT);
+        });
+    }
+
+    #[Route('/test-admin/runs/{id}/oracle-results', name: 'test_admin_run_oracle', methods: ['GET'])]
+    public function oracleResults(string $id, Request $request): JsonResponse
+    {
+        return $this->authorized($request, $id, function (TestRun $run): JsonResponse {
+            $results = $this->oracle->examine($run);
+
+            return $this->json([
+                'run_id' => $run->getId(),
+                'examined_at' => (new \DateTimeImmutable())->setTimezone(new \DateTimeZone('UTC'))->format(\DATE_ATOM),
+                'consistent' => !in_array(false, array_column($results, 'consistent'), true),
+                'results' => $results,
+            ]);
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function bugData(TestRun $run): array
+    {
+        return [
+            'run_id' => $run->getId(),
+            'active_bugs' => array_map(static fn (string $bugId): array => ['bug_id' => $bugId, 'challenge_id' => BugCatalog::get($bugId)['challenge_id'] ?? null], $run->getActiveBugs()),
+        ];
+    }
+
     private function assertEnabled(): void
     {
         // Indistinguishable from a route that was never there.
@@ -248,6 +334,7 @@ final class TestAdminController extends ApiController
             'seed' => $run->getSeed(),
             'manifest_hash' => $run->getManifestHash(),
             'resets' => $run->getResets(),
+            'active_bug_count' => count($run->getActiveBugs()),
             'clock_offset_seconds' => $run->getClockOffsetSeconds(),
             'clock_now' => (new \DateTimeImmutable())->modify(sprintf('+%d seconds', $run->getClockOffsetSeconds()))->setTimezone($utc)->format(\DATE_ATOM),
             'created_at' => $run->getCreatedAt()->setTimezone($utc)->format(\DATE_ATOM),

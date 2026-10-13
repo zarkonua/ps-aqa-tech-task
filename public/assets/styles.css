@@ -1132,3 +1132,34 @@ textarea:focus-visible {
     padding: 6px 0;
     border-bottom: 1px solid var(--line);
 }
+
+.run-challenges {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.run-challenge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 16px 4px 0;
+    font-family: monospace;
+}
+
+.run-oracle {
+    width: 100%;
+    margin-top: 12px;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.run-oracle th,
+.run-oracle td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}

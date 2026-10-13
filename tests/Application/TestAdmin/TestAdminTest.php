@@ -75,7 +75,7 @@ final class TestAdminTest extends WebTestCase
         $this->runIds[] = $run['run_id'];
 
         self::assertSame(
-            ['run_id', 'fixture', 'fixture_version', 'seed', 'manifest_hash', 'resets', 'clock_offset_seconds', 'clock_now', 'created_at', 'updated_at', 'run_token', 'manifest'],
+            ['run_id', 'fixture', 'fixture_version', 'seed', 'manifest_hash', 'resets', 'active_bug_count', 'clock_offset_seconds', 'clock_now', 'created_at', 'updated_at', 'run_token', 'manifest'],
             array_keys($run),
         );
         self::assertMatchesRegularExpression('/^r[0-9a-f]{12}$/', $run['run_id']);
@@ -349,7 +349,7 @@ final class TestAdminTest extends WebTestCase
         // …documented for the runner…
         self::assertSame(200, $this->call('GET', '/test-admin/openapi.json'));
         $paths = array_keys($this->json()['paths']);
-        foreach (['/test-admin/runs', '/test-admin/runs/{id}', '/test-admin/runs/{id}/manifest', '/test-admin/runs/{id}/reset', '/test-admin/runs/{id}/advance-clock'] as $path) {
+        foreach (['/test-admin/runs', '/test-admin/runs/{id}', '/test-admin/runs/{id}/manifest', '/test-admin/runs/{id}/reset', '/test-admin/runs/{id}/advance-clock', '/test-admin/bugs', '/test-admin/runs/{id}/bugs', '/test-admin/runs/{id}/oracle-results'] as $path) {
             self::assertContains($path, $paths);
         }
         self::assertSame(200, $this->call('GET', '/test-admin/fixtures'));

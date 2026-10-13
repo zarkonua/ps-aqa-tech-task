@@ -48,6 +48,13 @@ services:
         tags:
             - { name: 'api_platform.doctrine.orm.query_extension.collection', priority: -40 }
 
+    # Stands in for the real pagination (and takes over its tag), which it distorts for test runs that ask for it.
+    App\ApiPlatform\NotePaginationFaultExtension:
+        autoconfigure: false
+        decorates: api_platform.doctrine.orm.query_extension.pagination
+        arguments:
+            $pagination: '@.inner'
+
     # Must run before BrokenModeNoteNormalizer so the role is set in every app mode.
     App\Serializer\NoteRoleNormalizer:
         autoconfigure: false

@@ -14,6 +14,8 @@ use App\Repository\NoteRepository;
 use App\Repository\TaskRepository;
 use App\Security\NoteAccess;
 use App\Service\AuditLogger;
+use App\Service\BugCatalog;
+use App\Service\BugSwitch;
 use App\Service\Collaborators;
 use App\Service\Notifier;
 use App\Util\Uuid;
@@ -46,6 +48,7 @@ final class TaskController extends ApiController
         private readonly AuditLogger $audit,
         private readonly EntityManagerInterface $entityManager,
         private readonly Notifier $notifier,
+        private readonly BugSwitch $bugs,
     ) {
     }
 
@@ -189,7 +192,10 @@ final class TaskController extends ApiController
             $this->entityManager->flush();
             $this->notifier->taskAssigned($task, $user);
 
-            return $this->json($this->taskData($task, $user), Response::HTTP_CREATED, ['Location' => '/api/tasks/'.$task->getId()]);
+            // Injected defect BUG-006, only for test runs that have it switched on.
+            $status = $this->bugs->isActive(BugCatalog::STATUS_CODE, $user) ? Response::HTTP_OK : Response::HTTP_CREATED;
+
+            return $this->json($this->taskData($task, $user), $status, ['Location' => '/api/tasks/'.$task->getId()]);
         });
     }
 
@@ -393,7 +399,8 @@ final class TaskController extends ApiController
             }
 
             $from = $task->getStatus();
-            if (!$from->canMoveTo($target)) {
+            // Injected defect BUG-010 lets any move through, only for test runs that have it switched on.
+            if (!$from->canMoveTo($target) && !$this->bugs->isActive(BugCatalog::TRANSITION, $user)) {
                 return $this->json([
                     'error' => sprintf('A task cannot move from %s to %s.', $from->value, $target->value),
                     'current_status' => $from->value,
@@ -470,7 +477,8 @@ final class TaskController extends ApiController
             $description = $payload['description'] ?? '';
             if (!is_string($description)) {
                 $violations[] = ['propertyPath' => 'description', 'message' => 'Description must be a string.'];
-            } elseif (mb_strlen($description) > self::MAX_DESCRIPTION) {
+            } elseif (mb_strlen($description) > self::MAX_DESCRIPTION && !$this->bugs->isActive(BugCatalog::VALIDATION, $user)) {
+                // (The limit is skipped by injected defect BUG-008 for test runs that have it switched on.)
                 $violations[] = ['propertyPath' => 'description', 'message' => sprintf('Description cannot be longer than %d characters.', self::MAX_DESCRIPTION)];
             } else {
                 $task->setDescription($description);

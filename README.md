@@ -79,6 +79,8 @@ This diagram can help you understand the main entities and interactions before t
 
 Isolated, resettable sets of test data are managed through a separate, token-protected API and page
 under `/test-admin` (not available in production). See [Test Data Management](docs/test-data-management.md).
+Known defects can be switched on per run and checked by an oracle: [Controlled Bug Injection](docs/controlled-bug-injection.md)
+(ground truth — not for the agents under test).
 
 ## Fixtures
 

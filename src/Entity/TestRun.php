@@ -45,6 +45,14 @@ class TestRun
     #[ORM\Column(type: 'integer', options: ['default' => 0])]
     private int $resets = 0;
 
+    /**
+     * IDs of the catalogued defects switched on for this run.
+     *
+     * @var list<string>|null
+     */
+    #[ORM\Column(name: 'active_bugs', type: 'json', nullable: true)]
+    private ?array $activeBugs = null;
+
     #[ORM\Column(name: 'created_at', type: 'datetime_immutable')]
     private \DateTimeImmutable $createdAt;
 
@@ -121,6 +129,25 @@ class TestRun
     public function setClockOffsetSeconds(int $seconds): self
     {
         $this->clockOffsetSeconds = $seconds;
+        $this->updatedAt = new \DateTimeImmutable();
+
+        return $this;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function getActiveBugs(): array
+    {
+        return $this->activeBugs ?? [];
+    }
+
+    /**
+     * @param list<string> $bugIds
+     */
+    public function setActiveBugs(array $bugIds): self
+    {
+        $this->activeBugs = [] === $bugIds ? null : array_values($bugIds);
         $this->updatedAt = new \DateTimeImmutable();
 
         return $this;

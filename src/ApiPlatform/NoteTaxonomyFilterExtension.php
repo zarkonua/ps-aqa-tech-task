@@ -8,6 +8,8 @@ use ApiPlatform\Doctrine\Orm\Extension\QueryCollectionExtensionInterface;
 use ApiPlatform\Doctrine\Orm\Util\QueryNameGeneratorInterface;
 use ApiPlatform\Metadata\Operation;
 use App\Entity\Note;
+use App\Service\BugCatalog;
+use App\Service\BugSwitch;
 use Doctrine\ORM\QueryBuilder;
 
 /**
@@ -23,6 +25,11 @@ final class NoteTaxonomyFilterExtension implements QueryCollectionExtensionInter
     private const ID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
     public const ID_PATTERN = '/^'.self::ID.'$/D';
     public const TAG_IDS_PATTERN = '/^'.self::ID.'(,'.self::ID.'){0,9}$/D';
+
+    public function __construct(
+        private readonly BugSwitch $bugs,
+    ) {
+    }
 
     public function applyToCollection(QueryBuilder $queryBuilder, QueryNameGeneratorInterface $queryNameGenerator, string $resourceClass, ?Operation $operation = null, array $context = []): void
     {
@@ -42,7 +49,12 @@ final class NoteTaxonomyFilterExtension implements QueryCollectionExtensionInter
                 $queryBuilder->setParameter($parameter, $tagId);
             }
 
-            $glue = self::MATCH_ALL === ($filters['tagMatch'] ?? self::MATCH_ANY) ? ' AND ' : ' OR ';
+            $all = self::MATCH_ALL === ($filters['tagMatch'] ?? self::MATCH_ANY);
+            // Injected defect BUG-003, only for test runs that have it switched on.
+            if ($this->bugs->isActive(BugCatalog::TAG_MATCH)) {
+                $all = !$all;
+            }
+            $glue = $all ? ' AND ' : ' OR ';
             $queryBuilder->andWhere('('.implode($glue, $conditions).')');
         }
 

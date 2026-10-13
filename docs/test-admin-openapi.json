@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "QA Task — test-data API (runner only)",
-    "version": "1.0.0",
-    "description": "Creates, resets and removes isolated test runs. Not part of the application's public API: it exists only outside production and only when TEST_ADMIN_TOKEN is set, and it accepts its own tokens, never a user's JWT. Keep this document and the tokens away from the agents under test."
+    "title": "QA Task — test-admin API (runner only)",
+    "version": "1.1.0",
+    "description": "Creates, resets and removes isolated test runs. Not part of the application's public API: it exists only outside production and only when TEST_ADMIN_TOKEN is set, and it accepts its own tokens, never a user's JWT. Keep this document and the tokens away from the agents under test. Version 1.1 adds controlled bug injection: the defect catalog and the oracle are ground truth for scoring."
   },
   "servers": [
     {
@@ -133,6 +133,10 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "active_bug_count": {
+            "type": "integer",
+            "description": "How many injected defects are switched on. Which ones: GET /test-admin/runs/{id}/bugs."
           }
         }
       },
@@ -165,6 +169,165 @@
               }
             }
           }
+        }
+      },
+      "Bug": {
+        "type": "object",
+        "properties": {
+          "bug_id": {
+            "type": "string",
+            "example": "BUG-002"
+          },
+          "challenge_id": {
+            "type": "string",
+            "description": "Opaque name that can be logged or shown without giving the defect away.",
+            "example": "ch-9b2e60"
+          },
+          "name": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "minor",
+              "major",
+              "critical"
+            ]
+          },
+          "feature": {
+            "type": "string"
+          },
+          "surface": {
+            "type": "string",
+            "enum": [
+              "api",
+              "ui",
+              "auth",
+              "filter",
+              "sort",
+              "async",
+              "state"
+            ]
+          },
+          "preconditions": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "actual": {
+            "type": "string"
+          },
+          "remediation": {
+            "type": "string"
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Bug IDs that cannot be switched on together with this one."
+          }
+        }
+      },
+      "ActiveBugs": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "active_bugs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "bug_id": {
+                  "type": "string"
+                },
+                "challenge_id": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "example": {
+          "run_id": "r3f9a1c2b7d4",
+          "active_bugs": [
+            {
+              "bug_id": "BUG-002",
+              "challenge_id": "ch-9b2e60"
+            }
+          ]
+        }
+      },
+      "OracleResults": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "examined_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "consistent": {
+            "type": "boolean",
+            "description": "True when every defect shows exactly where it is switched on and nowhere else."
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "bug_id": {
+                  "type": "string"
+                },
+                "challenge_id": {
+                  "type": "string"
+                },
+                "active": {
+                  "type": "boolean"
+                },
+                "expected": {
+                  "description": "What a correct application answers to the probe."
+                },
+                "actual": {
+                  "description": "What this run answered."
+                },
+                "manifested": {
+                  "type": "boolean",
+                  "description": "expected and actual differ."
+                },
+                "consistent": {
+                  "type": "boolean",
+                  "description": "manifested equals active."
+                },
+                "error": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Set when the probe could not be completed."
+                }
+              }
+            }
+          }
+        },
+        "example": {
+          "run_id": "r3f9a1c2b7d4",
+          "examined_at": "2026-10-14T08:00:00+00:00",
+          "consistent": true,
+          "results": [
+            {
+              "bug_id": "BUG-002",
+              "challenge_id": "ch-9b2e60",
+              "active": true,
+              "expected": 403,
+              "actual": 200,
+              "manifested": true,
+              "consistent": true,
+              "error": null
+            }
+          ]
         }
       }
     }
@@ -998,6 +1161,435 @@
                 },
                 "example": {
                   "error": "Internal server error."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/bugs": {
+      "get": {
+        "summary": "The defect catalog (ground truth).",
+        "description": "Every defect that can be injected, with what is expected, what happens instead and which defects exclude each other. Administrator token only.",
+        "security": [
+          {
+            "adminToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bugs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Bug"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or an unknown one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run or on an administrator route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/runs/{id}/bugs": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "example": "r3f9a1c2b7d4"
+        }
+      ],
+      "get": {
+        "summary": "Defects switched on for a run.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The selection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveBugs"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or an unknown one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run or on an administrator route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Switch on exactly these defects for a run.",
+        "description": "Replaces the previous selection; repeating the request changes nothing. Only this run's personas are affected. Bug IDs and challenge IDs are both accepted.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "bug_ids"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "bug_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "example": {
+                "bug_ids": [
+                  "ch-9b2e60",
+                  "BUG-006"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new selection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveBugs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Body is not a JSON object.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid JSON payload."
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or an unknown one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run or on an administrator route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run is being changed by another request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run \"r3f9a1c2b7d4\" is being changed by another request. Try again in a moment."
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Empty or malformed list, unknown ID, unknown field, or defects that exclude each other.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                },
+                "example": {
+                  "error": "Validation failed.",
+                  "violations": [
+                    {
+                      "propertyPath": "bug_ids",
+                      "message": "BUG-001 and BUG-005 cannot be switched on together: one hides the other."
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Switch all defects off for a run.",
+        "description": "Idempotent. Resetting the run does the same and also restores its data.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The run behaves correctly again."
+          },
+          "401": {
+            "description": "No token, or an unknown one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run or on an administrator route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run is being changed by another request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run \"r3f9a1c2b7d4\" is being changed by another request. Try again in a moment."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-admin/runs/{id}/oracle-results": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "example": "r3f9a1c2b7d4"
+        }
+      ],
+      "get": {
+        "summary": "Check how the run really behaves, defect by defect.",
+        "description": "Sends, as the run's own personas and through the whole application, the requests that reveal each catalogued defect, and reports expected and actual. Although a GET, it leaves traces in the run (an edited note, notifications): reset the run afterwards.",
+        "security": [
+          {
+            "adminToken": []
+          },
+          {
+            "runToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One result per catalogued defect.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OracleResults"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No token, or an unknown one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Invalid test-admin token."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A run token used on another run or on an administrator route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "This token only gives access to its own run."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "Run not found."
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run's personas are missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "The personas of this run are missing. Reset the run and try again."
                 }
               }
             }
